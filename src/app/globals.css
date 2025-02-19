@@ -1,6 +1,42 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --animate-fade-in: fade-in 1s ease-in-out 0.5s forwards;
+  --animate-grow: grow 2s ease-out forwards;
+
+  --font-manrope: "Manrope", serif;
+
+  --color-primary: #908a8a;
+  --color-primary-foreground: "";
+  --color-secondary: #243c5a;
+  --color-secondary-foreground: "";
+  --color-accent: "";
+  --color-accent-foreground: "";
+  --color-background: "#ffffff";
+  --color-foreground: "#000000";
+
+  --color-button-primary: #908a8a;
+
+  @keyframes fade-in {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes grow {
+    0% {
+      opacity: 0;
+      transform: scale(0);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
 
 :root {
   --background: #ffffff;
