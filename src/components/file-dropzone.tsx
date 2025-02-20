@@ -15,7 +15,10 @@ import {
 import { FileUploadIcons } from "./file-upload-icons";
 import * as pdfjsLib from "pdfjs-dist";
 import { toast } from "sonner";
-import { useProcessedFilesStore } from "@/store/processed-files";
+import {
+  ProcessingStatus,
+  useProcessedFilesStore,
+} from "@/store/processed-files";
 import { delay } from "@/utils/app";
 import { useDropAnimationStore } from "@/store/drop-animation-store";
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
@@ -196,15 +199,9 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
               );
             };
 
-            const results: string[] = [];
-
             if (isPDF) {
               await processPDF(
                 uploadedFiles,
-                results,
-                () => {
-                  onFilesProcessed([...results]);
-                },
                 (pagesProcessed, pagesTotal) => {
                   processedPages = pagesProcessed;
                   totalPages = pagesTotal;
@@ -255,7 +252,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [addFile, addPageToFile, animate, onFilesProcessed]
+      [addFile, addPageToFile, animate]
     );
 
     return (
@@ -353,8 +350,6 @@ async function processPage(pdf: pdfjsLib.PDFDocumentProxy, pageNumber: number) {
 /** Handles PDF processing */
 async function processPDF(
   filesArray: File[],
-  results: string[],
-  onPageProcessed: (results: string[]) => void,
   onProgressUpdate: (processedPages: number, totalPages: number) => void,
   abortSignal?: AbortSignal
 ) {
@@ -385,6 +380,9 @@ async function processPDF(
 
       // Creates promises for chunk of pages
       for (let j = i; j <= end; j++) {
+        useProcessedFilesStore
+          .getState()
+          .setFileStatus(file.name, ProcessingStatus.PROCESSING);
         pagePromises.push(processPage(pdf, j));
       }
 
@@ -394,6 +392,9 @@ async function processPDF(
       for (let j = 0; j < chunkResults.length; j++) {
         if (abortSignal?.aborted) break;
         const pageNumber = i + j;
+        useProcessedFilesStore
+          .getState()
+          .setFileStatus(file.name, ProcessingStatus.COMPLETED);
         addPageToFile(file.name, pageNumber, chunkResults[j]);
         processedPages++;
         onProgressUpdate(processedPages, totalPages);
