@@ -6,6 +6,8 @@ import { FileDropZone } from "@/components/file-dropzone";
 import { SearchInput } from "@/components/search-input";
 import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
+import progressUpload from "@/components/progress-upload";
+import ProgressUpload from "@/components/progress-upload";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>(Mode.UPLOAD);
@@ -34,25 +36,19 @@ export default function Home() {
     [mode]
   );
 
-  useLayoutEffect(
-    function () {
-      updateButtonPosition();
-    },
-    [mode, updateButtonPosition]
-  );
+  useLayoutEffect(() => {
+    updateButtonPosition();
+  }, [mode, updateButtonPosition]);
 
-  useLayoutEffect(
-    function () {
-      window.addEventListener("resize", updateButtonPosition);
-      return function () {
-        window.removeEventListener("resize", updateButtonPosition);
-      };
-    },
-    [updateButtonPosition]
-  );
+  useLayoutEffect(() => {
+    window.addEventListener("resize", updateButtonPosition);
+    return function () {
+      window.removeEventListener("resize", updateButtonPosition);
+    };
+  }, [updateButtonPosition]);
 
   function handleSwitch() {
-    setMode(function (prevMode) {
+    setMode((prevMode) => {
       return prevMode === Mode.UPLOAD ? Mode.SEARCH : Mode.UPLOAD;
     });
   }
@@ -79,6 +75,7 @@ export default function Home() {
         style={{ top: switchButtonTop }}
         currentMode={mode}
       />
+      <ProgressUpload />
     </Background>
   );
 }

@@ -15,6 +15,9 @@ import {
 import { FileUploadIcons } from "./file-upload-icons";
 import * as pdfjsLib from "pdfjs-dist";
 import { toast } from "sonner";
+import { useProcessedFilesStore } from "@/store/processed-files";
+import { delay } from "@/utils/app";
+import { useDraggingStore } from "@/store/dragging-store";
 
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -46,29 +49,27 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dropOverlayRef = useRef<HTMLDivElement>(null);
     const processingRef = useRef(false);
-    const objectUrlsRef = useRef<string[]>([]);
     const [isDragging, setIsDragging] = useState(false);
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const [showAbortDialog, setShowAbortDialog] = useState(false);
     const pendingFiles = useRef<FileList | null>(null);
 
-    /** Cleanup object URLs when component unmounts */
+    const { addFile, addPageToFile, setTotalFiles, reset } =
+      useProcessedFilesStore();
+    const setIsDraggingStore = useDraggingStore((state) => state.setIsDragging);
+
+    /** Cleanup when component unmounts */
     useEffect(() => {
       return () => {
-        objectUrlsRef.current.forEach(URL.revokeObjectURL);
-        objectUrlsRef.current = [];
+        reset();
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
       };
-    }, []);
+    }, [reset]);
 
-    // Add cleanup for abort controller
-    useEffect(() => {
-      return () => {
-        abortControllerRef.current?.abort();
-      };
-    }, []);
-
-    /** Handle new file upload while processing */
+    /** Handles new file upload while processing */
     const handleNewUploadRequest = (files: FileList) => {
       if (processingRef.current) {
         pendingFiles.current = files;
@@ -83,6 +84,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       abortControllerRef.current?.abort();
       processingRef.current = false;
       setShowAbortDialog(false);
+      reset();
       if (pendingFiles.current) {
         handleFiles(pendingFiles.current);
         pendingFiles.current = null;
@@ -92,19 +94,25 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     /** Handles drag events to show overlay */
     const handleDrag = useCallback((event: React.DragEvent) => {
       event.preventDefault();
-      console.log(processingRef.current);
-      setIsDragging(event.type === "dragover");
+      const isDragging = event.type === "dragover";
+      setIsDragging(isDragging);
+      setIsDraggingStore(isDragging);
     }, []);
 
     /** Processes file list */
     const handleFiles = useCallback(
       async (files: FileList) => {
         if (processingRef.current) return;
+
+        setTotalFiles(files.length);
+        // Delays processing (progress animation duration)
+        await delay(300);
+
         processingRef.current = true;
 
         const uploadedFiles = Array.from(files);
 
-        // Ensure all files are one of the allowed types.
+        // Ensures all files are one of the allowed types.
         const invalidFiles = uploadedFiles.filter(
           (file) => !ALLOWED_FILE_TYPES.includes(file.type)
         );
@@ -126,8 +134,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
         const processPromise = new Promise<void>(async (resolve, reject) => {
           try {
-            const filesArray = Array.from(files);
-            const [firstFile] = filesArray;
+            const [firstFile] = uploadedFiles;
             const isPDF = firstFile?.type === "application/pdf";
             let totalPages = 0;
             let processedPages = 0;
@@ -149,7 +156,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
             if (isPDF) {
               await processPDF(
-                filesArray,
+                uploadedFiles,
                 results,
                 () => {
                   onFilesProcessed([...results]);
@@ -162,15 +169,16 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
                 abortControllerRef.current?.signal
               );
             } else {
-              totalPages = filesArray.length;
-              filesArray
+              totalPages = uploadedFiles.length;
+              uploadedFiles
                 .sort((a, b) =>
                   a.name.localeCompare(b.name, undefined, { numeric: true })
                 )
                 .forEach((file) => {
-                  results.push(URL.createObjectURL(file));
+                  const url = URL.createObjectURL(file);
                   processedPages++;
-                  onFilesProcessed([...results]);
+                  addFile(file.name);
+                  addPageToFile(file.name, 1, url);
                   updateProgress();
                 });
             }
@@ -192,12 +200,10 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         toast.promise(processPromise, {
           loading: "Initializing processor...",
           success: () => {
-            objectUrlsRef.current = [];
             return "All files processed successfully! 🎉";
           },
           error: (error) => {
             console.error("Processing error:", error);
-            objectUrlsRef.current.forEach(URL.revokeObjectURL);
             return error instanceof Error
               ? `Processing failed: ${error.message}`
               : "Failed to process files. Please try again.";
@@ -205,7 +211,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [ALLOWED_FILE_TYPES, onFilesProcessed]
+      [addFile, addPageToFile, onFilesProcessed, setTotalFiles]
     );
 
     return (
@@ -306,6 +312,7 @@ async function processPDF(
   let totalPages = 0;
   let processedPages = 0;
   const CHUNK_SIZE = 3; // Processes 3 pages at a time
+  const { addFile, addPageToFile } = useProcessedFilesStore.getState();
 
   for (const file of filesArray) {
     if (abortSignal?.aborted) {
@@ -316,6 +323,7 @@ async function processPDF(
       data: await file.arrayBuffer(),
     }).promise;
     totalPages += pdf.numPages;
+    addFile(file.name);
 
     // Processes pages in chunks
     for (let i = 1; i <= pdf.numPages; i += CHUNK_SIZE) {
@@ -334,16 +342,15 @@ async function processPDF(
       // Processes chunk of pages concurrently
       const chunkResults = await Promise.all(pagePromises);
 
-      // Handles results
-      for (const dataUrl of chunkResults) {
+      for (let j = 0; j < chunkResults.length; j++) {
         if (abortSignal?.aborted) break;
-        results.push(dataUrl);
-        onPageProcessed([...results]);
+        const pageNumber = i + j;
+        addPageToFile(file.name, pageNumber, chunkResults[j]);
         processedPages++;
         onProgressUpdate(processedPages, totalPages);
       }
 
-      // Adds small delay between chunks to prevent UI freezing
+      // Delay between chunks to prevent UI freezing
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
@@ -357,24 +364,30 @@ const DropOverlay = forwardRef<
     onDragEvent: (e: React.DragEvent) => void;
     onFilesDropped: (files: FileList) => void;
   }
->(({ isDragging, onDragEvent, onFilesDropped }, ref) => (
-  <div
-    ref={ref}
-    role="region"
-    aria-label="File drop zone"
-    className={`drop-overlay absolute inset-0 transition-opacity duration-300 ${
-      isDragging ? "opacity-100 bg-primary/20" : "opacity-0"
-    } border-2 border-dashed border-primary rounded-lg`}
-    onDragOver={onDragEvent}
-    onDragLeave={onDragEvent}
-    onDrop={(e) => {
-      onDragEvent(e);
-      if (e.dataTransfer.files.length > 0) {
-        onFilesDropped(e.dataTransfer.files);
-      }
-    }}
-  />
-));
+>(({ isDragging, onDragEvent, onFilesDropped }, ref) => {
+  const setDropPosition = useDraggingStore((state) => state.setDropPosition);
+
+  return (
+    <div
+      ref={ref}
+      role="region"
+      aria-label="File drop zone"
+      className={`drop-overlay absolute inset-0 transition-opacity duration-300 ${
+        isDragging ? "opacity-100 bg-primary/20" : "opacity-0"
+      } border-2 border-dashed border-primary rounded-lg`}
+      onDragOver={onDragEvent}
+      onDragLeave={onDragEvent}
+      onDrop={(e) => {
+        onDragEvent(e);
+        if (e.dataTransfer.files.length > 0) {
+          const { clientX: x, clientY: y } = e;
+          setDropPosition(x, y);
+          onFilesDropped(e.dataTransfer.files);
+        }
+      }}
+    />
+  );
+});
 
 DropOverlay.displayName = "DropOverlay";
 
