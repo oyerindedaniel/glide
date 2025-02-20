@@ -17,7 +17,10 @@ import * as pdfjsLib from "pdfjs-dist";
 import { toast } from "sonner";
 import { useProcessedFilesStore } from "@/store/processed-files";
 import { delay } from "@/utils/app";
-import { useDraggingStore } from "@/store/dragging-store";
+import { useDropAnimationStore } from "@/store/drop-animation-store";
+import { ANIMATION_DURATION } from "@/constants/drop-animation";
+import { cn } from "@/lib/utils";
+import { mergeRefs } from "@/utils/react";
 
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -48,6 +51,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
   function FileDropZone({ onFilesProcessed }, ref) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dropOverlayRef = useRef<HTMLDivElement>(null);
+    const uploadAreaRef = useRef<HTMLDivElement>(null);
     const processingRef = useRef(false);
     const [isDragging, setIsDragging] = useState(false);
 
@@ -57,8 +61,16 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
     const { addFile, addPageToFile, setTotalFiles, reset } =
       useProcessedFilesStore();
-    const setIsDraggingStore = useDraggingStore((state) => state.setIsDragging);
-    const newDraggingState = useDraggingStore((state) => state.isDragging);
+    const setIsDraggingStore = useDropAnimationStore(
+      (state) => state.setIsDragging
+    );
+    const newDraggingState = useDropAnimationStore((state) => state.isDragging);
+    const animateToSnapPosition = useDropAnimationStore(
+      (state) => state.animateToSnapPosition
+    );
+    const setDropPosition = useDropAnimationStore(
+      (state) => state.setDropPosition
+    );
 
     /** Cleanup when component unmounts */
     useEffect(() => {
@@ -69,6 +81,18 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         }
       };
     }, [reset]);
+
+    useEffect(() => {
+      const element = uploadAreaRef.current;
+      if (!element) return;
+
+      const { x, width, top } = element.getBoundingClientRect();
+
+      const newX = Math.round(x + width);
+      const newY = Math.round(top);
+
+      setDropPosition(newX, newY);
+    }, [setDropPosition]);
 
     /** Handles new file upload while processing */
     const handleNewUploadRequest = (files: FileList) => {
@@ -106,14 +130,24 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       [newDraggingState, setIsDraggingStore]
     );
 
+    const animate = useCallback(
+      async function (filesLength: number) {
+        animateToSnapPosition();
+
+        setTimeout(() => {
+          setTotalFiles(filesLength);
+        }, ANIMATION_DURATION - 50);
+
+        // Delays processing (progress animation duration)
+        await delay(ANIMATION_DURATION);
+      },
+      [animateToSnapPosition, setTotalFiles]
+    );
+
     /** Processes file list */
     const handleFiles = useCallback(
       async (files: FileList) => {
         if (processingRef.current) return;
-
-        setTotalFiles(files.length);
-        // Delays processing (progress animation duration)
-        await delay(300);
 
         processingRef.current = true;
 
@@ -134,6 +168,9 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           toast("Please upload files of the same type (either images or PDF).");
           return;
         }
+
+        // animation
+        await animate(uploadedFiles.length);
 
         // new abort controller
         abortControllerRef.current?.abort();
@@ -218,7 +255,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [addFile, addPageToFile, onFilesProcessed, setTotalFiles]
+      [addFile, addPageToFile, animate, onFilesProcessed]
     );
 
     return (
@@ -262,7 +299,12 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           />
 
           {/* Upload Icon & Clickable Area */}
-          <UploadArea ref={ref} onClick={() => fileInputRef.current?.click()} />
+          <UploadArea
+            ref={ref}
+            uploadAreaRef={uploadAreaRef}
+            isDragging={isDragging}
+            onClick={() => fileInputRef.current?.click()}
+          />
         </div>
       </>
     );
@@ -372,16 +414,20 @@ const DropOverlay = forwardRef<
     onFilesDropped: (files: FileList) => void;
   }
 >(({ isDragging, onDragEvent, onFilesDropped }, ref) => {
-  const setDropPosition = useDraggingStore((state) => state.setDropPosition);
+  const setDropPosition = useDropAnimationStore(
+    (state) => state.setDropPosition
+  );
 
   return (
     <div
       ref={ref}
       role="region"
       aria-label="File drop zone"
-      className={`drop-overlay absolute inset-0 transition-opacity duration-300 ${
+      className={cn(
+        `drop-overlay absolute inset-0 transition-opacity duration-300 
+        border-2 border-dashed border-primary rounded-lg`,
         isDragging ? "opacity-100 bg-primary/20" : "opacity-0"
-      } border-2 border-dashed border-primary rounded-lg`}
+      )}
       onDragOver={onDragEvent}
       onDragLeave={onDragEvent}
       onDrop={(e) => {
@@ -399,25 +445,33 @@ const DropOverlay = forwardRef<
 DropOverlay.displayName = "DropOverlay";
 
 /** Upload Area Component */
-const UploadArea = forwardRef<HTMLDivElement, { onClick: () => void }>(
-  ({ onClick }, ref) => (
-    <div
-      ref={ref}
-      role="button"
-      tabIndex={0}
-      className="w-fit left-2/4 -translate-x-2/4 absolute top-[30%] cursor-pointer"
-      onClick={onClick}
-      onKeyDown={(e) => e.key === "Enter" && onClick()}
-    >
-      <FileUploadIcons />
-      <div className="space-y-2 font-[family-name:var(--font-manrope)] text-center text-sm mt-5">
-        <p className="font-medium">Drag & drop files here</p>
-        <p className="text-sm text-muted-foreground">
-          Supported formats: PNG, JPG, PDF
-        </p>
-      </div>
+const UploadArea = forwardRef<
+  HTMLDivElement,
+  {
+    onClick: () => void;
+    isDragging: boolean;
+    uploadAreaRef: React.RefObject<HTMLDivElement | null>;
+  }
+>(({ onClick, isDragging, uploadAreaRef }, ref) => (
+  <div
+    ref={mergeRefs(ref, uploadAreaRef)}
+    role="button"
+    tabIndex={0}
+    className={cn(
+      "w-fit left-2/4 -translate-x-2/4 absolute top-[30%] cursor-pointer",
+      isDragging ? "pointer-events-none hidden" : "pointer-events-auto"
+    )}
+    onClick={onClick}
+    onKeyDown={(e) => e.key === "Enter" && onClick()}
+  >
+    <FileUploadIcons />
+    <div className="space-y-2 font-[family-name:var(--font-manrope)] text-center text-sm mt-5">
+      <p className="font-medium">Drag & drop files here</p>
+      <p className="text-sm text-muted-foreground">
+        Supported formats: PNG, JPG, PDF
+      </p>
     </div>
-  )
-);
+  </div>
+));
 
 UploadArea.displayName = "UploadArea";
