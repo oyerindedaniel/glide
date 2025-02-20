@@ -82,6 +82,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       };
     }, [reset]);
 
+    /** Setup up drop position when upload file is trigger via click */
     useEffect(() => {
       const element = uploadAreaRef.current;
       if (!element) return;
@@ -130,6 +131,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       [newDraggingState, setIsDraggingStore]
     );
 
+    /** Handles animation to snap position */
     const animate = useCallback(
       async function (filesLength: number) {
         animateToSnapPosition();

@@ -114,6 +114,7 @@ export function ProgressUpload(props: ProgressUploadProps) {
       />
       {isPresent && (
         <div
+          data-present={isPresent}
           ref={elementRef}
           className="absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer"
         >
