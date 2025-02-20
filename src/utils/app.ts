@@ -7,3 +7,11 @@
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Checks if `window` is defined to prevent SSR-related errors.
+ * @returns {boolean} `true` if running in the browser, otherwise `false`.
+ */
+export function isWindowDefined(): boolean {
+  return typeof window !== "undefined";
+}

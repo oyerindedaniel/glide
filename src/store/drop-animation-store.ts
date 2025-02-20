@@ -1,5 +1,6 @@
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { create } from "zustand";
+import { isWindowDefined } from "@/utils/app";
 
 interface DropAnimationState {
   isDragging: boolean;
@@ -33,8 +34,8 @@ export const useDropAnimationStore = create<DropAnimationState>((set, get) => ({
   constraints: {
     minWidth: 0,
     minHeight: 0,
-    maxWidth: window.innerWidth,
-    maxHeight: window.innerHeight,
+    maxWidth: isWindowDefined() ? window.innerWidth : 1920,
+    maxHeight: isWindowDefined() ? window.innerHeight : 1080,
   },
   nodeRef: null,
   setIsDragging: (isDragging) => set({ isDragging }),
@@ -43,6 +44,13 @@ export const useDropAnimationStore = create<DropAnimationState>((set, get) => ({
   setConstraints: (constraints) => set({ constraints }),
   setNodeRef: (node) => set({ nodeRef: node }),
   animateToSnapPosition: () => {
+    if (!isWindowDefined) {
+      console.error(
+        "animateToSnapPosition called in SSR environment. Skipping execution."
+      );
+      return;
+    }
+
     const { dropPosition, snapPosition, nodeRef } = get();
     if (!nodeRef) return;
 
