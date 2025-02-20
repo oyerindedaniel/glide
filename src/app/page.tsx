@@ -6,7 +6,6 @@ import { FileDropZone } from "@/components/file-dropzone";
 import { SearchInput } from "@/components/search-input";
 import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
-import progressUpload from "@/components/progress-upload";
 import ProgressUpload from "@/components/progress-upload";
 
 export default function Home() {

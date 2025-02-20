@@ -58,6 +58,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const { addFile, addPageToFile, setTotalFiles, reset } =
       useProcessedFilesStore();
     const setIsDraggingStore = useDraggingStore((state) => state.setIsDragging);
+    const newDraggingState = useDraggingStore((state) => state.isDragging);
 
     /** Cleanup when component unmounts */
     useEffect(() => {
@@ -92,12 +93,18 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     };
 
     /** Handles drag events to show overlay */
-    const handleDrag = useCallback((event: React.DragEvent) => {
-      event.preventDefault();
-      const isDragging = event.type === "dragover";
-      setIsDragging(isDragging);
-      setIsDraggingStore(isDragging);
-    }, []);
+    const handleDrag = useCallback(
+      (event: React.DragEvent) => {
+        event.preventDefault();
+        const isDragging = event.type === "dragover";
+
+        setIsDragging(isDragging);
+        if (isDragging !== newDraggingState) {
+          setIsDraggingStore(isDragging);
+        }
+      },
+      [newDraggingState, setIsDraggingStore]
+    );
 
     /** Processes file list */
     const handleFiles = useCallback(

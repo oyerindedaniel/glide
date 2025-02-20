@@ -1,9 +1,10 @@
 "use client";
 
-import React, { memo } from "react";
+import React, { memo, useRef, useMemo } from "react";
 import Image from "next/image";
 import { useProcessedFilesStore } from "@/store/processed-files";
 import { useDraggingStore } from "@/store/dragging-store";
+import { useAnimatePresence } from "@/hooks/use-animate-presence";
 
 /**
  * ProgressUpload Component
@@ -17,9 +18,65 @@ export function ProgressUpload(props: ProgressUploadProps) {
   const totalFiles = useProcessedFilesStore((state) => state.totalFiles);
   const { isDragging, dropPosition } = useDraggingStore();
 
+  const elementRef = useRef<HTMLDivElement>(null);
+  const isActive = useMemo(
+    () => isDragging || totalFiles > 0,
+    [isDragging, totalFiles]
+  );
+
+  const isPresent = useAnimatePresence(isActive, async (presence) => {
+    const element = elementRef.current;
+    if (!element) return;
+
+    let rafId: number | null = null;
+
+    const runTransition = (
+      opacity: string,
+      transform: string,
+      easing: string = "cubic-bezier(0.4, 0, 0.2, 1)"
+    ) =>
+      new Promise<void>((resolve) => {
+        const handleTransitionEnd = (e: TransitionEvent) => {
+          if (e.target === element) {
+            resolve();
+            if (rafId) {
+              cancelAnimationFrame(rafId);
+              rafId = null;
+            }
+            element.removeEventListener("transitionend", handleTransitionEnd);
+          }
+        };
+
+        element.addEventListener("transitionend", handleTransitionEnd);
+
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = null;
+        }
+        rafId = requestAnimationFrame(() => {
+          element.style.transition = `all 300ms ${easing}`;
+          element.style.opacity = opacity;
+          element.style.transform = transform;
+        });
+      });
+
+    if (presence) {
+      element.style.transition = "none";
+      element.style.opacity = "0";
+      element.style.transform = "scale(0.8)";
+
+      return runTransition("1", "scale(1)");
+    } else {
+      return runTransition("0", "scale(0.8)");
+    }
+  });
+
   return (
-    isDragging && (
-      <div className="absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer">
+    isPresent && (
+      <div
+        ref={elementRef}
+        className="absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer"
+      >
         <div className="relative">
           <Image
             className="w-12"
