@@ -61,16 +61,13 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
     const { addFile, addPageToFile, setTotalFiles, reset } =
       useProcessedFilesStore();
-    const setIsDraggingStore = useDropAnimationStore(
-      (state) => state.setIsDragging
-    );
-    const newDraggingState = useDropAnimationStore((state) => state.isDragging);
-    const animateToSnapPosition = useDropAnimationStore(
-      (state) => state.animateToSnapPosition
-    );
-    const setDropPosition = useDropAnimationStore(
-      (state) => state.setDropPosition
-    );
+    const {
+      setIsDragging: setIsDraggingStore,
+      isDragging: newDraggingState,
+      animateToSnapPosition,
+      setDropPosition,
+      cleanup,
+    } = useDropAnimationStore();
 
     /** Cleanup when component unmounts */
     useEffect(() => {
@@ -79,8 +76,9 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }
+        cleanup();
       };
-    }, [reset]);
+    }, [cleanup, reset]);
 
     /** Setup up drop position when upload file is trigger via click */
     useEffect(() => {

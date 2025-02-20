@@ -23,6 +23,7 @@ interface DropAnimationState {
     maxHeight: number;
   }) => void;
   animateToSnapPosition: () => void;
+  cleanup: () => void;
 }
 
 export const useDropAnimationStore = create<DropAnimationState>((set, get) => ({
@@ -81,5 +82,13 @@ export const useDropAnimationStore = create<DropAnimationState>((set, get) => ({
     };
 
     animationFrameId = requestAnimationFrame(animate);
+  },
+  cleanup: () => {
+    set({
+      isDragging: false,
+      dropPosition: { x: 0, y: 0 },
+      snapPosition: { x: 0, y: 0 },
+      nodeRef: null,
+    });
   },
 }));
