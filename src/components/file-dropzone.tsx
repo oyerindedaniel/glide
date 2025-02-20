@@ -387,15 +387,29 @@ async function processPDF(
       }
 
       // Processes chunk of pages concurrently
-      const chunkResults = await Promise.all(pagePromises);
+      const chunkResults = await Promise.allSettled(pagePromises);
 
       for (let j = 0; j < chunkResults.length; j++) {
         if (abortSignal?.aborted) break;
+
         const pageNumber = i + j;
-        useProcessedFilesStore
-          .getState()
-          .setFileStatus(file.name, ProcessingStatus.COMPLETED);
-        addPageToFile(file.name, pageNumber, chunkResults[j]);
+        const result = chunkResults[j];
+
+        if (result.status === "fulfilled") {
+          useProcessedFilesStore
+            .getState()
+            .setFileStatus(file.name, ProcessingStatus.COMPLETED);
+          addPageToFile(file.name, pageNumber, result.value);
+        } else {
+          console.error(
+            `Failed to process page ${pageNumber} of ${file.name}:`,
+            result.reason
+          );
+          useProcessedFilesStore
+            .getState()
+            .setFileStatus(file.name, ProcessingStatus.FAILED);
+        }
+
         processedPages++;
         onProgressUpdate(processedPages, totalPages);
       }
