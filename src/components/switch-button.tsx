@@ -17,7 +17,10 @@ interface SwitchButtonProps {
  */
 export function SwitchButton(props: SwitchButtonProps) {
   return (
-    <div style={props.style} className="absolute left-2/4 -translate-x-2/4">
+    <div
+      style={props.style}
+      className="absolute left-2/4 -translate-x-2/4 z-50"
+    >
       <Button
         variant="link"
         className="p-0 h-max cursor-pointer"

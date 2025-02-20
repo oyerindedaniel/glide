@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import manrope from "@/assets/fonts";
 import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "Glide",
@@ -15,6 +16,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script src="https://unpkg.com/react-scan/dist/auto.global.js" async />
+      </head>
       <body
         className={cn(
           "antialiased h-svh w-full font-[family-name:var(--font-manrope)]",
@@ -22,6 +26,7 @@ export default function RootLayout({
         )}
       >
         {children}
+        <Toaster />
       </body>
     </html>
   );

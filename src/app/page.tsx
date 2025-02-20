@@ -12,6 +12,7 @@ export default function Home() {
   const fileDropZoneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLDivElement>(null);
   const [switchButtonTop, setSwitchButtonTop] = useState<number>(0);
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
 
   /**
    * Updates the position of the switch button based on the active component.
@@ -56,10 +57,20 @@ export default function Home() {
     });
   }
 
+  const handleFilesSelected = (files: string[]) => {
+    console.log("Selected files:", files);
+  };
+
   return (
     <Background>
       {mode === Mode.UPLOAD ? (
-        <FileDropZone ref={fileDropZoneRef} />
+        <FileDropZone
+          ref={fileDropZoneRef}
+          onFilesProcessed={(images) => {
+            setUploadedImages(images);
+            handleFilesSelected(images);
+          }}
+        />
       ) : (
         <SearchInput ref={searchInputRef} />
       )}

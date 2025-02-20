@@ -9,6 +9,7 @@ export const FileUploadIcons: React.FC = () => (
       alt="PNG upload icon"
       width={122}
       height={131}
+      priority
       unoptimized
     />
     <Image
@@ -17,6 +18,7 @@ export const FileUploadIcons: React.FC = () => (
       alt="JPG upload icon"
       width={122}
       height={131}
+      priority
       unoptimized
     />
     <Image
@@ -25,6 +27,7 @@ export const FileUploadIcons: React.FC = () => (
       alt="PDF upload icon"
       width={122}
       height={131}
+      priority
       unoptimized
     />
   </div>
