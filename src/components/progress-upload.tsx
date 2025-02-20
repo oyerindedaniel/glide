@@ -49,12 +49,9 @@ export function ProgressUpload(props: ProgressUploadProps) {
 
         element.addEventListener("transitionend", handleTransitionEnd);
 
-        if (rafId) {
-          cancelAnimationFrame(rafId);
-          rafId = null;
-        }
         rafId = requestAnimationFrame(() => {
-          element.style.transition = `all 300ms ${easing}`;
+          console.log("in this");
+          element.style.transition = `all 250ms ${easing}`;
           element.style.opacity = opacity;
           element.style.transform = transform;
         });

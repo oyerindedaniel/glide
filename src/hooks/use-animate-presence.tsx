@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 
 /**
  * Hook to manage presence state with an async callback.
@@ -13,11 +13,16 @@ export function useAnimatePresence(
 ): boolean {
   const [internalPresence, setInternalPresence] =
     useState<boolean>(externalPresence);
+  const onAnimateRef = useRef(onAnimate);
+
+  useEffect(() => {
+    onAnimateRef.current = onAnimate;
+  });
 
   const handleAnimation = useCallback(
     async (presence: boolean): Promise<void> => {
       try {
-        await onAnimate(presence);
+        await onAnimateRef.current(presence);
       } catch (error) {
         console.error("Animation error:", error);
         return Promise.reject(error);
@@ -27,17 +32,9 @@ export function useAnimatePresence(
   );
 
   useEffect(() => {
-    let isMounted = true;
-
     handleAnimation(externalPresence).then(() => {
-      if (isMounted) {
-        setInternalPresence(externalPresence);
-      }
+      setInternalPresence(externalPresence);
     });
-
-    return () => {
-      isMounted = false;
-    };
   }, [externalPresence, handleAnimation]);
 
   return useMemo(
