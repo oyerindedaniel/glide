@@ -13,5 +13,5 @@ export function delay(ms: number): Promise<void> {
  * @returns {boolean} `true` if running in the browser, otherwise `false`.
  */
 export function isWindowDefined(): boolean {
-  return typeof window !== "undefined";
+  return typeof window !== "undefined" && typeof document !== "undefined";
 }
