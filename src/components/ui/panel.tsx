@@ -21,7 +21,7 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
-const PanelRoot = React.forwardRef<
+const PanelStatic = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => {
@@ -41,6 +41,51 @@ const PanelRoot = React.forwardRef<
     </PanelContext.Provider>
   );
 });
+PanelStatic.displayName = "PanelStatic";
+
+const PanelRoot = React.forwardRef<
+  HTMLDivElement,
+  {
+    open?: boolean; // Controlled prop;
+    onOpenChange?: (open: boolean) => void; // Controlled callback;
+    defaultOpen?: boolean; // Uncontrolled initial state;
+    triggerRef?: React.RefObject<HTMLElement>;
+    children: React.ReactNode;
+  }
+>(
+  (
+    {
+      open: controlledOpen,
+      onOpenChange,
+      defaultOpen = false,
+      triggerRef,
+      children,
+    },
+    forwardedRef
+  ) => {
+    const isControlled = controlledOpen !== undefined;
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
+    const isOpen = isControlled ? controlledOpen : internalOpen;
+
+    const handleOpenChange = (newOpen: boolean) => {
+      if (isControlled) {
+        onOpenChange?.(newOpen);
+      } else {
+        setInternalOpen(newOpen);
+      }
+    };
+
+    return (
+      <PanelContent
+        open={isOpen}
+        onOpenChange={handleOpenChange}
+        triggerRef={triggerRef}
+      >
+        {children}
+      </PanelContent>
+    );
+  }
+);
 PanelRoot.displayName = "PanelRoot";
 
 const PanelHeader = React.forwardRef<
@@ -144,48 +189,25 @@ PanelPortal.displayName = "PanelPortal";
 const PanelContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & {
-    open?: boolean; // Controlled prop
-    onOpenChange?: (open: boolean) => void; // Controlled callback
-    defaultOpen?: boolean; // Uncontrolled initial state
+    open: boolean;
+    onOpenChange?: (open: boolean) => void;
     triggerRef?: React.RefObject<HTMLElement>;
   }
 >(
   (
-    {
-      className,
-      children,
-      open: controlledOpen,
-      onOpenChange,
-      defaultOpen = false,
-      triggerRef,
-      ...props
-    },
+    { className, children, open, onOpenChange, triggerRef, ...props },
     forwardedRef
   ) => {
-    const isControlled = controlledOpen !== undefined;
-
-    const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
-
-    const isOpen = isControlled ? controlledOpen : internalOpen;
-
     const [titleId, setTitleId] = React.useState<string | undefined>();
     const [descriptionId, setDescriptionId] = React.useState<
       string | undefined
     >();
     const panelRef = React.useRef<HTMLDivElement>(null);
 
-    const handleOpenChange = (newOpen: boolean) => {
-      if (isControlled) {
-        onOpenChange?.(newOpen);
-      } else {
-        setInternalOpen(newOpen);
-      }
-    };
-
     React.useEffect(() => {
       const trigger = triggerRef?.current;
 
-      if (isOpen && panelRef.current) {
+      if (open && panelRef.current) {
         const focusableElements =
           panelRef.current.querySelectorAll(focusableSelector);
         if (focusableElements.length > 0) {
@@ -196,15 +218,15 @@ const PanelContent = React.forwardRef<
       }
 
       return () => {
-        if (!isOpen && trigger) {
+        if (!open && trigger) {
           trigger.focus();
         }
       };
-    }, [isOpen, triggerRef]);
+    }, [open, triggerRef]);
 
     const handleKeyDown = (event: React.KeyboardEvent) => {
       if (event.key === "Escape") {
-        handleOpenChange(false);
+        onOpenChange?.(false);
       } else if (event.key === "Tab") {
         if (panelRef.current) {
           const focusableElements =
@@ -229,11 +251,11 @@ const PanelContent = React.forwardRef<
       }
     };
 
-    if (!isOpen) return null;
+    if (!open) return null;
 
     return (
       <PanelPortal>
-        <PanelOverlay onOpenChange={handleOpenChange} />
+        <PanelOverlay onOpenChange={onOpenChange} />
         <PanelContext.Provider value={{ setTitleId, setDescriptionId }}>
           <div
             ref={mergeRefs(panelRef, forwardedRef)}
@@ -283,7 +305,7 @@ const PanelCancel = React.forwardRef<
 PanelCancel.displayName = "PanelCancel";
 
 export {
-  PanelRoot,
+  PanelRoot as Panel,
   PanelHeader,
   PanelBody,
   PanelFooter,
@@ -294,4 +316,5 @@ export {
   PanelContent,
   PanelAction,
   PanelCancel,
+  PanelStatic,
 };
