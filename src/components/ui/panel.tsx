@@ -21,28 +21,6 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
-const PanelStatic = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const [titleId, setTitleId] = React.useState<string | undefined>();
-  return (
-    <PanelContext.Provider value={{ setTitleId, setDescriptionId: () => {} }}>
-      <div
-        ref={ref}
-        role="region"
-        aria-labelledby={titleId}
-        className={cn(
-          "relative w-full max-w-3xl bg-background p-6 shadow-lg sm:rounded-lg",
-          className
-        )}
-        {...props}
-      />
-    </PanelContext.Provider>
-  );
-});
-PanelStatic.displayName = "PanelStatic";
-
 const PanelRoot = React.forwardRef<
   HTMLDivElement,
   {
@@ -279,6 +257,28 @@ const PanelContent = React.forwardRef<
   }
 );
 PanelContent.displayName = "PanelContent";
+
+const PanelStatic = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => {
+  const [titleId, setTitleId] = React.useState<string | undefined>();
+  return (
+    <PanelContext.Provider value={{ setTitleId, setDescriptionId: () => {} }}>
+      <div
+        ref={ref}
+        role="region"
+        aria-labelledby={titleId}
+        className={cn(
+          "relative w-full max-w-3xl bg-background p-6 shadow-lg sm:rounded-lg",
+          className
+        )}
+        {...props}
+      />
+    </PanelContext.Provider>
+  );
+});
+PanelStatic.displayName = "PanelStatic";
 
 const PanelAction = React.forwardRef<
   HTMLButtonElement,
