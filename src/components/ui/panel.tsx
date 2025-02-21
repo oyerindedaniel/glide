@@ -119,14 +119,16 @@ PanelDescription.displayName = "PanelDescription";
 
 const PanelOverlay = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { onClose?: () => void }
->(({ className, onClose, ...props }, ref) => (
+  React.HTMLAttributes<HTMLDivElement> & {
+    onOpenChange?: (open: boolean) => void;
+  }
+>(({ className, onOpenChange, ...props }, ref) => (
   <div
     ref={ref}
     className={cn("fixed inset-0 bg-black/50 z-50", className)}
     onClick={(event) => {
       if (event.target === event.currentTarget) {
-        onClose?.();
+        onOpenChange?.(false);
       }
     }}
     {...props}
@@ -142,87 +144,118 @@ PanelPortal.displayName = "PanelPortal";
 const PanelContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & {
-    onClose?: () => void;
+    open?: boolean; // Controlled prop
+    onOpenChange?: (open: boolean) => void; // Controlled callback
+    defaultOpen?: boolean; // Uncontrolled initial state
     triggerRef?: React.RefObject<HTMLElement>;
   }
->(({ className, children, onClose, triggerRef, ...props }, forwardedRef) => {
-  const [titleId, setTitleId] = React.useState<string | undefined>();
-  const [descriptionId, setDescriptionId] = React.useState<
-    string | undefined
-  >();
-  const panelRef = React.useRef<HTMLDivElement>(null);
+>(
+  (
+    {
+      className,
+      children,
+      open: controlledOpen,
+      onOpenChange,
+      defaultOpen = false,
+      triggerRef,
+      ...props
+    },
+    forwardedRef
+  ) => {
+    const isControlled = controlledOpen !== undefined;
 
-  React.useEffect(() => {
-    const trigger = triggerRef?.current;
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
 
-    if (panelRef.current) {
-      const focusableElements =
-        panelRef.current.querySelectorAll(focusableSelector);
-      if (focusableElements.length > 0) {
-        (focusableElements[0] as HTMLElement).focus();
+    const isOpen = isControlled ? controlledOpen : internalOpen;
+
+    const [titleId, setTitleId] = React.useState<string | undefined>();
+    const [descriptionId, setDescriptionId] = React.useState<
+      string | undefined
+    >();
+    const panelRef = React.useRef<HTMLDivElement>(null);
+
+    const handleOpenChange = (newOpen: boolean) => {
+      if (isControlled) {
+        onOpenChange?.(newOpen);
       } else {
-        panelRef.current.focus();
-      }
-    }
-
-    return () => {
-      if (trigger) {
-        trigger.focus();
+        setInternalOpen(newOpen);
       }
     };
-  }, [triggerRef]);
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === "Escape") {
-      onClose?.();
-    } else if (event.key === "Tab") {
-      if (panelRef.current) {
+    React.useEffect(() => {
+      const trigger = triggerRef?.current;
+
+      if (isOpen && panelRef.current) {
         const focusableElements =
           panelRef.current.querySelectorAll(focusableSelector);
-        if (focusableElements.length === 0) return;
-        const firstFocusable = focusableElements[0] as HTMLElement;
-        const lastFocusable = focusableElements[
-          focusableElements.length - 1
-        ] as HTMLElement;
-        if (event.shiftKey) {
-          if (document.activeElement === firstFocusable) {
-            lastFocusable.focus();
-            event.preventDefault();
-          }
+        if (focusableElements.length > 0) {
+          (focusableElements[0] as HTMLElement).focus();
         } else {
-          if (document.activeElement === lastFocusable) {
-            firstFocusable.focus();
-            event.preventDefault();
+          panelRef.current.focus();
+        }
+      }
+
+      return () => {
+        if (!isOpen && trigger) {
+          trigger.focus();
+        }
+      };
+    }, [isOpen, triggerRef]);
+
+    const handleKeyDown = (event: React.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        handleOpenChange(false);
+      } else if (event.key === "Tab") {
+        if (panelRef.current) {
+          const focusableElements =
+            panelRef.current.querySelectorAll(focusableSelector);
+          if (focusableElements.length === 0) return;
+          const firstFocusable = focusableElements[0] as HTMLElement;
+          const lastFocusable = focusableElements[
+            focusableElements.length - 1
+          ] as HTMLElement;
+          if (event.shiftKey) {
+            if (document.activeElement === firstFocusable) {
+              lastFocusable.focus();
+              event.preventDefault();
+            }
+          } else {
+            if (document.activeElement === lastFocusable) {
+              firstFocusable.focus();
+              event.preventDefault();
+            }
           }
         }
       }
-    }
-  };
+    };
 
-  return (
-    <PanelPortal>
-      <PanelOverlay onClose={onClose} />
-      <PanelContext.Provider value={{ setTitleId, setDescriptionId }}>
-        <div
-          ref={mergeRefs(panelRef, forwardedRef)}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={titleId}
-          aria-describedby={descriptionId}
-          className={cn(
-            "fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-white p-6 shadow-lg sm:rounded-lg",
-            className
-          )}
-          onKeyDown={handleKeyDown}
-          tabIndex={-1}
-          {...props}
-        >
-          {children}
-        </div>
-      </PanelContext.Provider>
-    </PanelPortal>
-  );
-});
+    if (!isOpen) return null;
+
+    return (
+      <PanelPortal>
+        <PanelOverlay onOpenChange={handleOpenChange} />
+        <PanelContext.Provider value={{ setTitleId, setDescriptionId }}>
+          <div
+            ref={mergeRefs(panelRef, forwardedRef)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            className={cn(
+              "fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-white p-6 shadow-lg sm:rounded-lg",
+              className
+            )}
+            onKeyDown={handleKeyDown}
+            tabIndex={-1}
+            {...props}
+          >
+            {children}
+          </div>
+        </PanelContext.Provider>
+      </PanelPortal>
+    );
+  }
+);
 PanelContent.displayName = "PanelContent";
 
 const PanelAction = React.forwardRef<
