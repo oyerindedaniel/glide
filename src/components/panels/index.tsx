@@ -8,9 +8,5 @@ export function Panels() {
 
   if (!isMounted) return;
 
-  return (
-    <>
-      <PanelAbortProcessing />
-    </>
-  );
+  return <div className="absolute"></div>;
 }

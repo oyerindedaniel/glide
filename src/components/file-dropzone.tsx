@@ -3,15 +3,6 @@
 
 import * as React from "react";
 import { forwardRef, useRef, useState, useEffect, useCallback } from "react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { FileUploadIcons } from "./file-upload-icons";
 import * as pdfjsLib from "pdfjs-dist";
 import { toast } from "sonner";
@@ -24,6 +15,9 @@ import { useDropAnimationStore } from "@/store/drop-animation-store";
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { cn } from "@/lib/utils";
 import { mergeRefs } from "@/utils/react";
+import { PanelAbortProcessing } from "./panels/panel-abort-processing";
+import { usePanelStore, PanelType } from "@/store/panel";
+import { PANEL_IDS } from "@/constants/panel";
 
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -58,7 +52,6 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const [isDragging, setIsDragging] = useState(false);
 
     const abortControllerRef = useRef<AbortController | null>(null);
-    const [showAbortDialog, setShowAbortDialog] = useState(false);
     const pendingFiles = useRef<FileList | null>(null);
 
     const { addFile, addPageToFile, setTotalFiles, reset } =
@@ -70,6 +63,8 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       setDropPosition,
       cleanup,
     } = useDropAnimationStore();
+
+    const { closePanel, openPanel } = usePanelStore();
 
     /** Cleanup when component unmounts */
     useEffect(() => {
@@ -99,7 +94,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const handleNewUploadRequest = (files: FileList) => {
       if (processingRef.current) {
         pendingFiles.current = files;
-        setShowAbortDialog(true);
+        openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
       } else {
         handleFiles(files);
       }
@@ -109,7 +104,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const handleAbortAndProcess = () => {
       abortControllerRef.current?.abort();
       processingRef.current = false;
-      setShowAbortDialog(false);
+      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
       reset();
       if (pendingFiles.current) {
         handleFiles(pendingFiles.current);
@@ -224,6 +219,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
             }
 
             processingRef.current = false;
+            closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
             resolve();
           } catch (error) {
             if ((error as Error).message === "Processing aborted") {
@@ -251,28 +247,12 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [addFile, addPageToFile, animate]
+      [addFile, addPageToFile, animate, closePanel]
     );
 
     return (
       <>
-        <AlertDialog open={showAbortDialog} onOpenChange={setShowAbortDialog}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Cancel Current Processing?</AlertDialogTitle>
-            </AlertDialogHeader>
-            <p>
-              Do you want to cancel the current file processing to handle new
-              files?
-            </p>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Continue Current</AlertDialogCancel>
-              <AlertDialogAction onClick={handleAbortAndProcess}>
-                Process New Files
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <PanelAbortProcessing handleAbortAndProcess={handleAbortAndProcess} />
         <div>
           {/* Drag Overlay for detecting file drag */}
           <DropOverlay

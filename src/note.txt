@@ -1,0 +1,8 @@
+PDF Process → [Main Thread Impact]
+
+1. Load PDF    → [None - Worker]
+2. Parse PDF   → [None - Worker]
+3. Get Page    → [None - Worker]
+4. Viewport    → [None - Worker]
+5. Render      → [Heavy - Main Thread] ⚠️
+6. WebP Convert→ [Heavy - Main Thread] ⚠️
