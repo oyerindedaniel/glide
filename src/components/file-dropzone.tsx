@@ -43,15 +43,14 @@ if (typeof window !== "undefined") {
 //   });
 // }, []);
 
-interface FileDropZoneProps {
-  onFilesProcessed: (images: string[]) => void;
-}
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+interface FileDropZoneProps {}
 
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const ALLOWED_FILE_TYPES = [...ALLOWED_IMAGE_TYPES, "application/pdf"];
 
 export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
-  function FileDropZone({ onFilesProcessed }, ref) {
+  function FileDropZone({}, ref) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dropOverlayRef = useRef<HTMLDivElement>(null);
     const uploadAreaRef = useRef<HTMLDivElement>(null);

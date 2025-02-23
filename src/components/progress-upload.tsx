@@ -33,48 +33,52 @@ export function ProgressUpload(props: ProgressUploadProps) {
     [isDragging, totalFiles]
   );
 
-  const isPresent = useAnimatePresence(isActive, async (presence) => {
-    const element = elementRef.current;
-    if (!element) return;
+  const isPresent = useAnimatePresence(
+    isActive,
+    async (presence) => {
+      const element = elementRef.current;
+      if (!element) return;
 
-    let rafId: number | null = null;
+      let rafId: number | null = null;
 
-    const runTransition = (
-      opacity: string,
-      transform: string,
-      easing: string = ANIMATION_EASING
-    ) =>
-      new Promise<void>((resolve) => {
-        const handleTransitionEnd = (e: TransitionEvent) => {
-          if (e.target === element) {
-            resolve();
-            if (rafId) {
-              cancelAnimationFrame(rafId);
-              rafId = null;
+      const runTransition = (
+        opacity: string,
+        transform: string,
+        easing: string = ANIMATION_EASING
+      ) =>
+        new Promise<void>((resolve) => {
+          const handleTransitionEnd = (e: TransitionEvent) => {
+            if (e.target === element) {
+              resolve();
+              if (rafId) {
+                cancelAnimationFrame(rafId);
+                rafId = null;
+              }
+              element.removeEventListener("transitionend", handleTransitionEnd);
             }
-            element.removeEventListener("transitionend", handleTransitionEnd);
-          }
-        };
+          };
 
-        element.addEventListener("transitionend", handleTransitionEnd);
+          element.addEventListener("transitionend", handleTransitionEnd);
 
-        rafId = requestAnimationFrame(() => {
-          element.style.transition = `all ${ANIMATION_DURATION}ms ${easing}`;
-          element.style.opacity = opacity;
-          element.style.transform = transform;
+          rafId = requestAnimationFrame(() => {
+            element.style.transition = `all ${ANIMATION_DURATION}ms ${easing}`;
+            element.style.opacity = opacity;
+            element.style.transform = transform;
+          });
         });
-      });
 
-    if (presence) {
-      element.style.transition = "none";
-      element.style.opacity = "0";
-      element.style.transform = "scale(0.8)";
+      if (presence) {
+        element.style.transition = "none";
+        element.style.opacity = "0";
+        element.style.transform = "scale(0.8)";
 
-      return runTransition("1", "scale(1)");
-    } else {
-      return runTransition("0", "scale(0.8)");
-    }
-  });
+        return runTransition("1", "scale(1)");
+      } else {
+        return runTransition("0", "scale(0.8)");
+      }
+    },
+    { animateOnInitialLoad: false }
+  );
 
   useEffect(() => {
     const element = snapToelementRef.current;

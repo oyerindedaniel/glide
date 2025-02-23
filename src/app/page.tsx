@@ -7,13 +7,16 @@ import { SearchInput } from "@/components/search-input";
 import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
 import ProgressUpload from "@/components/progress-upload";
+import { PanelAbortProcessing } from "@/components/panels/panel-abort-processing";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>(Mode.UPLOAD);
   const fileDropZoneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLDivElement>(null);
   const [switchButtonTop, setSwitchButtonTop] = useState<number>(0);
-  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+  const [isO, setO] = useState(false);
 
   /**
    * Updates the position of the switch button based on the active component.
@@ -52,20 +55,10 @@ export default function Home() {
     });
   }
 
-  const handleFilesSelected = (files: string[]) => {
-    console.log("Selected files:", files);
-  };
-
   return (
     <Background>
       {mode === Mode.UPLOAD ? (
-        <FileDropZone
-          ref={fileDropZoneRef}
-          onFilesProcessed={(images) => {
-            setUploadedImages(images);
-            handleFilesSelected(images);
-          }}
-        />
+        <FileDropZone ref={fileDropZoneRef} />
       ) : (
         <SearchInput ref={searchInputRef} />
       )}
@@ -75,6 +68,25 @@ export default function Home() {
         currentMode={mode}
       />
       <ProgressUpload />
+      <>
+        <PanelAbortProcessing />
+      </>
+      <div
+        data-state={isO ? "open" : "closed"}
+        className={cn(
+          "absolute top-1/2 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+        )}
+      >
+        Danieddddd
+      </div>
+
+      <Button
+        className="fixed bottom-7"
+        variant="secondary"
+        onClick={() => setO((prev) => !prev)}
+      >
+        Toog
+      </Button>
     </Background>
   );
 }
