@@ -6,3 +6,10 @@ PDF Process → [Main Thread Impact]
 4. Viewport    → [None - Worker]
 5. Render      → [Heavy - Main Thread] ⚠️
 6. WebP Convert→ [Heavy - Main Thread] ⚠️
+
+
+
+Further Improvements (If Needed)
+Exponential Backoff – Add a delay between retries to avoid overwhelming the system.
+Detailed Metrics – Track how many pages succeeded/failed and retries performed for better monitoring.
+Dynamic Concurrency – Increase MAX_CONCURRENT_FILES dynamically based on system load.

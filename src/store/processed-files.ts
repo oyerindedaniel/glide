@@ -8,92 +8,49 @@ export enum ProcessingStatus {
 }
 
 /**
+ * Represents the processing state for each page in a file.
+ */
+interface PageStatus {
+  url: string;
+  status: ProcessingStatus;
+}
+
+/**
  * Represents the state for tracking processed files and their statuses.
  */
 interface ProcessedFileState {
-  /**
-   * A map of processed files, where each file name maps to a nested map
-   * of page numbers and their corresponding processed URLs.
-   *
-   * @example
-   * processedFiles.get("file1.pdf")?.get(1) // Returns the URL of page 1
-   */
-  processedFiles: Map<string, Map<number, string>>;
-
-  /**
-   * A map storing the processing status of each file.
-   *
-   * @example
-   * fileStatus.get("file1.pdf") // Returns ProcessingStatus.PROCESSING
-   */
+  processedFiles: Map<string, Map<number, PageStatus>>;
   fileStatus: Map<string, ProcessingStatus>;
-
-  /**
-   * The total number of files to be processed.
-   */
   totalFiles: number;
-
-  /**
-   * Indicates whether all files have been completely processed.
-   * This is true when all files are either completed or failed.
-   */
   allFilesProcessed: boolean;
-
-  /**
-   * An object containing counts of files in each processing status.
-   *
-   * @example
-   * statusCounts[ProcessingStatus.PROCESSING] // Returns the number of files currently being processed
-   */
   statusCounts: Record<ProcessingStatus, number>;
 
-  /**
-   * Adds a new file to the store with an initial status of `NOT_STARTED`.
-   *
-   * @param fileName - The name of the file to be added.
-   */
-  addFile: (fileName: string) => void;
-
-  /**
-   * Associates a processed page with a file by storing its generated URL.
-   *
-   * @param fileName - The name of the file.
-   * @param pageNumber - The page number being processed.
-   * @param url - The URL of the processed page.
-   */
-  addPageToFile: (fileName: string, pageNumber: number, url: string) => void;
-
-  /**
-   * Updates the processing status of a file.
-   *
-   * @param fileName - The name of the file.
-   * @param status - The new processing status.
-   */
+  // Methods to manage the store
+  addFile: (fileName: string, totalPages: number) => void;
+  addPageToFile: (
+    fileName: string,
+    pageNumber: number,
+    url: string,
+    status?: ProcessingStatus
+  ) => void;
+  setPageStatus: (
+    fileName: string,
+    pageNumber: number,
+    status: ProcessingStatus
+  ) => void;
   setFileStatus: (fileName: string, status: ProcessingStatus) => void;
-
-  /**
-   * Sets the total number of files to be processed.
-   *
-   * @param total - The total file count.
-   */
   setTotalFiles: (total: number) => void;
-
-  /**
-   * Computes and updates the count of files in each processing status.
-   */
   computeStatusCounts: () => void;
-
-  /**
-   * Checks if all files have been processed (either completed or failed)
-   * and updates the `allFilesProcessed` flag.
-   */
   checkAllFilesProcessed: () => void;
-
-  /**
-   * Resets the store by clearing all processed files, statuses,
-   * and revoking any created object URLs to prevent memory leaks.
-   */
   reset: () => void;
+}
+
+/**
+ * Represents the processing state for each page in a file.
+ */
+interface PageStatus {
+  url: string;
+  status: ProcessingStatus;
 }
 
 export const useProcessedFilesStore = create<ProcessedFileState>(
@@ -109,13 +66,20 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       [ProcessingStatus.FAILED]: 0,
     },
 
-    addFile: (fileName) => {
+    /**
+     * Adds a new file with a NOT_STARTED status and prepares its pages.
+     */
+    addFile: (fileName, totalPages) => {
       set((state) => {
         const newProcessedFiles = new Map(state.processedFiles);
         const newFileStatus = new Map(state.fileStatus);
 
         if (!newProcessedFiles.has(fileName)) {
-          newProcessedFiles.set(fileName, new Map());
+          const pages = new Map<number, PageStatus>();
+          for (let i = 1; i <= totalPages; i++) {
+            pages.set(i, { url: "", status: ProcessingStatus.NOT_STARTED });
+          }
+          newProcessedFiles.set(fileName, pages);
           newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
         }
 
@@ -125,13 +89,21 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       get().computeStatusCounts();
     },
 
-    addPageToFile: (fileName, pageNumber, url) => {
+    /**
+     * Adds or updates a page URL and its status (default is COMPLETED).
+     */
+    addPageToFile: (
+      fileName,
+      pageNumber,
+      url,
+      status = ProcessingStatus.COMPLETED
+    ) => {
       set((state) => {
         const newProcessedFiles = new Map(state.processedFiles);
         const filePages = newProcessedFiles.get(fileName) || new Map();
         const newFilePages = new Map(filePages);
 
-        newFilePages.set(pageNumber, url);
+        newFilePages.set(pageNumber, { url, status });
         newProcessedFiles.set(fileName, newFilePages);
 
         return { processedFiles: newProcessedFiles };
@@ -140,6 +112,27 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       get().checkAllFilesProcessed();
     },
 
+    /**
+     * Updates the status of a specific page within a file.
+     */
+    setPageStatus: (fileName, pageNumber, status) => {
+      set((state) => {
+        const newProcessedFiles = new Map(state.processedFiles);
+        const filePages = newProcessedFiles.get(fileName);
+        if (filePages && filePages.has(pageNumber)) {
+          const page = filePages.get(pageNumber)!;
+          filePages.set(pageNumber, { ...page, status });
+          newProcessedFiles.set(fileName, filePages);
+        }
+        return { processedFiles: newProcessedFiles };
+      });
+
+      get().checkAllFilesProcessed();
+    },
+
+    /**
+     * Updates the overall file processing status.
+     */
     setFileStatus: (fileName, status) => {
       set((state) => {
         const newFileStatus = new Map(state.fileStatus);
@@ -148,7 +141,6 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       });
 
       get().computeStatusCounts();
-      // Checks if all files are processed
       if (
         status === ProcessingStatus.COMPLETED ||
         status === ProcessingStatus.FAILED
@@ -157,8 +149,14 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       }
     },
 
+    /**
+     * Sets the total number of files to process.
+     */
     setTotalFiles: (total) => set({ totalFiles: total }),
 
+    /**
+     * Computes and updates the counts for each processing status.
+     */
     computeStatusCounts: () => {
       const { fileStatus } = get();
       const statusCounts = {
@@ -175,22 +173,34 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
       set({ statusCounts });
     },
 
+    /**
+     * Checks whether all files (and their pages) have completed processing.
+     */
     checkAllFilesProcessed: () => {
-      const { fileStatus, totalFiles } = get();
-      const completedFiles = Array.from(fileStatus.values()).filter(
-        (status) =>
-          status === ProcessingStatus.COMPLETED ||
-          status === ProcessingStatus.FAILED
-      ).length;
+      const { processedFiles, totalFiles } = get();
+
+      let completedFiles = 0;
+
+      processedFiles.forEach((pages) => {
+        const allPagesCompleted = Array.from(pages.values()).every(
+          (page) =>
+            page.status === ProcessingStatus.COMPLETED ||
+            page.status === ProcessingStatus.FAILED
+        );
+
+        if (allPagesCompleted) completedFiles++;
+      });
 
       set({ allFilesProcessed: completedFiles === totalFiles });
     },
 
+    /**
+     * Resets the store and revokes all object URLs to prevent memory leaks.
+     */
     reset: () => {
       set((state) => {
-        // Revokes all object URLs
         state.processedFiles.forEach((pages) => {
-          pages.forEach((url) => URL.revokeObjectURL(url));
+          pages.forEach((page) => URL.revokeObjectURL(page.url));
         });
 
         return {

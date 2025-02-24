@@ -10,7 +10,7 @@ import {
   ProcessingStatus,
   useProcessedFilesStore,
 } from "@/store/processed-files";
-import { delay } from "@/utils/app";
+import { debounce, delay } from "@/utils/app";
 import { useDropAnimationStore } from "@/store/drop-animation-store";
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,14 @@ import { mergeRefs } from "@/utils/react";
 import { PanelAbortProcessing } from "./panels/panel-abort-processing";
 import { usePanelStore, PanelType } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
+import { PDFProcessor } from "@/classes/pdf-processor";
+import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
+import {
+  BASE_DELAY_MS,
+  FILE_PROCESSING_EVENTS,
+  MAX_CONCURRENT_FILES,
+  MAX_PAGE_RETRIES,
+} from "@/constants/processing";
 
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -51,11 +59,19 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const processingRef = useRef(false);
     const [isDragging, setIsDragging] = useState(false);
 
+    const pdfProcessor = useRef<PDFProcessor | null>(null);
+
     const abortControllerRef = useRef<AbortController | null>(null);
     const pendingFiles = useRef<FileList | null>(null);
 
-    const { addFile, addPageToFile, setTotalFiles, reset } =
-      useProcessedFilesStore();
+    const {
+      addFile,
+      addPageToFile,
+      setTotalFiles,
+      setFileStatus,
+      setPageStatus,
+      reset,
+    } = useProcessedFilesStore();
     const {
       setIsDragging: setIsDraggingStore,
       isDragging: newDraggingState,
@@ -65,6 +81,15 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     } = useDropAnimationStore();
 
     const { closePanel, openPanel } = usePanelStore();
+
+    useEffect(() => {
+      const newPdfProcessor = new PDFProcessor({
+        maxConcurrent: 2,
+        pageBufferSize: 5,
+      });
+      pdfProcessor.current = newPdfProcessor;
+      return () => newPdfProcessor.cleanup();
+    }, []);
 
     /** Cleanup when component unmounts */
     useEffect(() => {
@@ -141,6 +166,267 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       [animateToSnapPosition, setTotalFiles]
     );
 
+    // 3 cases
+    // single (redirect) or multiple images (allow for rearrangement before redirect)
+    // single pdf upload (allow for rearrangement before redirect) -> if new pdf are to be added restart
+    // muliple pdf upload (two options) (immediately is noticed redirect to start reading) (shallow level)
+    // or (indepth level)
+    // after indepth down show all files then allow for rearrangement
+
+    const processPdfsWithConcurrency = useCallback(async function (
+      files: File[],
+      abortSignal: AbortSignal
+    ) {
+      const pdfQueue = [...files];
+      const activeProcessors = new Map<string, PDFProcessor>();
+      const failedPages = new Map<
+        string,
+        { pageNumber: number; attempts: number }[]
+      >();
+
+      function isOnline() {
+        return navigator.onLine;
+      }
+
+      async function processNextPdf() {
+        if (abortSignal.aborted) {
+          throw new Error("Processing aborted");
+        }
+
+        if (
+          activeProcessors.size >= MAX_CONCURRENT_FILES ||
+          pdfQueue.length === 0
+        ) {
+          return;
+        }
+
+        const file = pdfQueue.shift()!;
+        const processor = new PDFProcessor({
+          maxConcurrent: 2,
+          pageBufferSize: 5,
+        });
+
+        activeProcessors.set(file.name, processor);
+
+        let hasPageFailure = false; // Tracks if any page fails
+
+        if (abortSignal.aborted) {
+          throw new Error("Processing aborted");
+        }
+
+        try {
+          const { totalPages } = await processor.processFile(file);
+
+          // Emit initial file events
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_ADD,
+            file.name,
+            totalPages
+          );
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
+            totalPages
+          );
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            ProcessingStatus.PROCESSING
+          );
+
+          // Prepare pages to process
+          const totalPagesArr = Array.from(
+            { length: totalPages },
+            (_, i) => i + 1
+          );
+
+          // Process pages and track failures
+          await Promise.allSettled(
+            totalPagesArr.map(async function (pageNum) {
+              if (abortSignal.aborted) {
+                throw new Error("Processing aborted");
+              }
+
+              const pageFailed = await processPageWithRetry(
+                file.name,
+                pageNum,
+                processor
+              );
+
+              // If any page fails, marks the file for failure
+              if (pageFailed) {
+                hasPageFailure = true;
+              }
+            })
+          );
+
+          // Cleanup after retries
+          failedPages.delete(file.name);
+
+          // Emit file-level status: FAILED if any page failed, else COMPLETED
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            hasPageFailure
+              ? ProcessingStatus.FAILED
+              : ProcessingStatus.COMPLETED
+          );
+        } catch (error) {
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            ProcessingStatus.FAILED
+          );
+          throw error;
+        } finally {
+          activeProcessors.delete(file.name);
+          processor.cleanup();
+          processNextPdf();
+        }
+      }
+
+      // Retry failed pages with exponential backoff and online check
+      async function processPageWithRetry(
+        fileName: string,
+        pageNumber: number,
+        processor: PDFProcessor
+      ) {
+        for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
+          if (abortSignal.aborted) {
+            throw new Error("Processing aborted");
+          }
+
+          try {
+            // Check if user is online before retrying
+            while (!isOnline()) {
+              console.warn(
+                `User offline. Pausing retries for ${fileName} page ${pageNumber}`
+              );
+              //TODO: right now this display every 5secs
+              toast.warning(
+                `User offline. Pausing retries for ${fileName} page ${pageNumber}`
+              );
+              await delay(5000); // Checks again after 5 seconds
+            }
+
+            // Processing: Emit PAGE_PROCESSED event
+            fileProcessingEmitter.emit(
+              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+              fileName,
+              pageNumber,
+              null,
+              ProcessingStatus.PROCESSING
+            );
+
+            const data = await processor.getPage(pageNumber);
+
+            if (abortSignal.aborted) {
+              throw new Error("Processing aborted");
+            }
+
+            // Success: Emit PAGE_PROCESSED event
+            fileProcessingEmitter.emit(
+              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+              fileName,
+              pageNumber,
+              data.url,
+              ProcessingStatus.COMPLETED
+            );
+            return false;
+          } catch {
+            console.warn(
+              `Page ${pageNumber} of ${fileName} failed (Attempt: ${attempt})`
+            );
+
+            // Failure: Track for retry
+            if (!failedPages.has(fileName)) {
+              failedPages.set(fileName, []);
+            }
+
+            const pageRetries = failedPages.get(fileName)!;
+            const existingPage = pageRetries.find(
+              (p) => p.pageNumber === pageNumber
+            );
+
+            if (existingPage) {
+              existingPage.attempts++;
+            } else {
+              pageRetries.push({ pageNumber, attempts: 1 });
+            }
+
+            // If max retries reached, mark page as failed
+            if (attempt === MAX_PAGE_RETRIES) {
+              fileProcessingEmitter.emit(
+                FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+                fileName,
+                pageNumber,
+                null,
+                ProcessingStatus.FAILED
+              );
+              return true;
+            }
+
+            // Apply exponential backoff before the next attempt
+            const delayTime = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            await delay(delayTime);
+          }
+        }
+        return true;
+      }
+
+      // Kick off initial processing
+      for (let i = 0; i < MAX_CONCURRENT_FILES && pdfQueue.length > 0; i++) {
+        processNextPdf();
+      }
+    },
+    []);
+
+    /**
+     * Process Image Files Sequentially
+     */
+    async function processImages(
+      files: File[],
+      abortSignal: AbortSignal,
+      updateProgress: () => void,
+      state: { totalPages: number; processedPages: number }
+    ) {
+      state.totalPages = files.length;
+
+      for (const file of files) {
+        if (abortSignal.aborted) {
+          throw new Error("Processing aborted");
+        }
+
+        fileProcessingEmitter.emit(
+          FILE_PROCESSING_EVENTS.FILE_STATUS,
+          file.name,
+          ProcessingStatus.PROCESSING
+        );
+
+        try {
+          const url = URL.createObjectURL(file);
+          addFile(file.name, 1);
+          addPageToFile(file.name, 1, url);
+
+          state.processedPages++;
+
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            ProcessingStatus.COMPLETED
+          );
+
+          updateProgress();
+        } catch (error) {
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            ProcessingStatus.FAILED
+          );
+          throw error;
+        }
+      }
+    }
+
     /** Processes file list */
     const handleFiles = useCallback(
       async (files: FileList) => {
@@ -159,7 +445,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           return;
         }
 
-        // Enforce that all files are of the same type.
+        // Ensures all files are of the same type.
         const fileTypes = new Set(uploadedFiles.map((file) => file.type));
         if (fileTypes.size > 1) {
           toast("Please upload files of the same type (either images or PDF).");
@@ -172,50 +458,85 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         // new abort controller
         abortControllerRef.current?.abort();
         abortControllerRef.current = new AbortController();
+        const { signal: abortSignal } = abortControllerRef.current;
+
+        const state = { totalPages: 0, processedPages: 0 };
+
+        const isPDF = fileTypes.has("application/pdf");
+
+        const updateProgress = () => {
+          if (abortSignal.aborted) return;
+          const { totalPages, processedPages } = state;
+          const progress =
+            totalPages > 0
+              ? Math.round((processedPages / totalPages) * 100)
+              : 0;
+          toast.loading(
+            isPDF
+              ? `Processing PDF: ${progress}% (page ${processedPages} of ${totalPages})`
+              : `Processing images: ${progress}% (${processedPages} of ${totalPages})`,
+            { id: "file-processing" }
+          );
+        };
+
+        // Event listeners
+        const onFileAdd = (fileName: string, totalPages: number) => {
+          addFile(fileName, totalPages);
+        };
+
+        const onPageProcessed = function (
+          fileName: string,
+          pageNumber: number,
+          url: string | null,
+          status: ProcessingStatus
+        ) {
+          state.processedPages++;
+          if (status === ProcessingStatus.COMPLETED && url) {
+            addPageToFile(fileName, pageNumber, url);
+          }
+
+          setPageStatus(fileName, pageNumber, status);
+          updateProgress();
+        };
+
+        const onFileStatus = (fileName: string, status: ProcessingStatus) => {
+          setFileStatus(fileName, status);
+        };
+
+        const onTotalPagesUpdate = (pages: number) => {
+          state.totalPages += pages;
+          updateProgress();
+        };
+
+        fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
+        fileProcessingEmitter.on(
+          FILE_PROCESSING_EVENTS.FILE_STATUS,
+          onFileStatus
+        );
+        fileProcessingEmitter.on(
+          FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+          onPageProcessed
+        );
+        fileProcessingEmitter.on(
+          FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
+          onTotalPagesUpdate
+        );
 
         const processPromise = new Promise<void>(async (resolve, reject) => {
           try {
-            const [firstFile] = uploadedFiles;
-            const isPDF = firstFile?.type === "application/pdf";
-            let totalPages = 0;
-            let processedPages = 0;
-
-            const updateProgress = () => {
-              const progress =
-                totalPages > 0
-                  ? Math.round((processedPages / totalPages) * 100)
-                  : 0;
-              toast.loading(
-                isPDF
-                  ? `Processing PDF: ${progress}% (page ${processedPages} of ${totalPages})`
-                  : "Processing images...",
-                { id: "file-processing" }
-              );
-            };
-
             if (isPDF) {
-              await processPDF(
-                uploadedFiles,
-                (pagesProcessed, pagesTotal) => {
-                  processedPages = pagesProcessed;
-                  totalPages = pagesTotal;
-                  updateProgress();
-                },
-                abortControllerRef.current?.signal
-              );
+              if (uploadedFiles.length === 1) {
+                // await processSinglePdf(uploadedFiles[0], abortSignal);
+              } else {
+                await processPdfsWithConcurrency(uploadedFiles, abortSignal);
+              }
             } else {
-              totalPages = uploadedFiles.length;
-              uploadedFiles
-                .sort((a, b) =>
-                  a.name.localeCompare(b.name, undefined, { numeric: true })
-                )
-                .forEach((file) => {
-                  const url = URL.createObjectURL(file);
-                  processedPages++;
-                  addFile(file.name);
-                  addPageToFile(file.name, 1, url);
-                  updateProgress();
-                });
+              await processImages(
+                uploadedFiles,
+                abortSignal,
+                updateProgress,
+                state
+              );
             }
 
             processingRef.current = false;
@@ -230,6 +551,22 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
             }
           } finally {
             processingRef.current = false;
+            fileProcessingEmitter.off(
+              FILE_PROCESSING_EVENTS.FILE_STATUS,
+              onFileStatus
+            );
+            fileProcessingEmitter.off(
+              FILE_PROCESSING_EVENTS.FILE_ADD,
+              onFileAdd
+            );
+            fileProcessingEmitter.off(
+              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+              onPageProcessed
+            );
+            fileProcessingEmitter.off(
+              FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
+              onTotalPagesUpdate
+            );
           }
         });
 
@@ -247,7 +584,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [addFile, addPageToFile, animate, closePanel]
+      [addFile, addPageToFile, animate, closePanel, setFileStatus]
     );
 
     return (
@@ -346,7 +683,7 @@ async function processPDF(
       data: await file.arrayBuffer(),
     }).promise;
     totalPages += pdf.numPages;
-    addFile(file.name);
+    addFile(file.name, totalPages);
 
     // Processes pages in chunks
     for (let i = 1; i <= pdf.numPages; i += CHUNK_SIZE) {

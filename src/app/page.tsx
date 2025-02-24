@@ -8,12 +8,17 @@ import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
 import ProgressUpload from "@/components/progress-upload";
 import { Panels } from "@/components/panels";
+import { useProcessedFilesStore } from "@/store/processed-files";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>(Mode.UPLOAD);
   const fileDropZoneRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLDivElement>(null);
   const [switchButtonTop, setSwitchButtonTop] = useState<number>(0);
+
+  const { processedFiles } = useProcessedFilesStore();
+
+  console.log(processedFiles);
 
   /**
    * Updates the position of the switch button based on the active component.

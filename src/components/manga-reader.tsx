@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { Panel } from "@/worker/panelDetectionWorker";
+import { Panel } from "@/worker/panel-detection.worker";
 
 // Placeholder TTS & OCR functions
 const speakText = async (text: string): Promise<void> => {
