@@ -1,6 +1,10 @@
 import * as pdfjsLib from "pdfjs-dist";
 import { WorkerMessageType, PageProcessingConfig } from "@/types/processor";
 
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+}
+
 export type WorkerMessage =
   | {
       type: WorkerMessageType.InitPDF;
@@ -20,8 +24,12 @@ export type WorkerResponse =
       dimensions: { width: number; height: number };
     }
   | {
+      type: WorkerMessageType.PDFInitialized;
+      totalPages: number;
+    }
+  | {
       type: WorkerMessageType.Error;
-      pageNumber: number;
+      pageNumber?: number;
       error: string;
     };
 
@@ -31,9 +39,22 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (e.data.type) {
       case WorkerMessageType.InitPDF:
-        pdfDocument = await pdfjsLib.getDocument({ data: e.data.pdfData })
-          .promise;
-        return;
+        try {
+          // Initializes the PDF document with the provided pdfData
+          pdfDocument = await pdfjsLib.getDocument({ data: e.data.pdfData })
+            .promise;
+
+          self.postMessage({
+            type: WorkerMessageType.PDFInitialized,
+            totalPages: pdfDocument.numPages,
+          });
+        } catch (error) {
+          self.postMessage({
+            type: WorkerMessageType.Error,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
+        break;
 
       case WorkerMessageType.ProcessPage:
         if (!pdfDocument) {
@@ -88,8 +109,11 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
       error instanceof Error ? error.message : "Unknown error";
     const response: WorkerResponse = {
       type: WorkerMessageType.Error,
-      pageNumber: "pageNumber" in e.data ? e.data.pageNumber : -1,
       error: errorMessage,
+      pageNumber:
+        e.data.type === WorkerMessageType.ProcessPage
+          ? e.data.pageNumber
+          : undefined,
     };
     self.postMessage(response);
   }

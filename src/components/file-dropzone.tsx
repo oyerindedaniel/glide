@@ -10,7 +10,7 @@ import {
   ProcessingStatus,
   useProcessedFilesStore,
 } from "@/store/processed-files";
-import { debounce, delay } from "@/utils/app";
+import { delay } from "@/utils/app";
 import { useDropAnimationStore } from "@/store/drop-animation-store";
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ import {
   MAX_CONCURRENT_FILES,
   MAX_PAGE_RETRIES,
 } from "@/constants/processing";
+import pLimit from "p-limit";
 
 if (typeof window !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -177,111 +178,12 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       files: File[],
       abortSignal: AbortSignal
     ) {
-      const pdfQueue = [...files];
-      const activeProcessors = new Map<string, PDFProcessor>();
-      const failedPages = new Map<
-        string,
-        { pageNumber: number; attempts: number }[]
-      >();
+      // Initialize concurrency limit
+      const limit = pLimit(MAX_CONCURRENT_FILES);
 
+      // Function to check if the user is online
       function isOnline() {
         return navigator.onLine;
-      }
-
-      async function processNextPdf() {
-        if (abortSignal.aborted) {
-          throw new Error("Processing aborted");
-        }
-
-        if (
-          activeProcessors.size >= MAX_CONCURRENT_FILES ||
-          pdfQueue.length === 0
-        ) {
-          return;
-        }
-
-        const file = pdfQueue.shift()!;
-        const processor = new PDFProcessor({
-          maxConcurrent: 2,
-          pageBufferSize: 5,
-        });
-
-        activeProcessors.set(file.name, processor);
-
-        let hasPageFailure = false; // Tracks if any page fails
-
-        if (abortSignal.aborted) {
-          throw new Error("Processing aborted");
-        }
-
-        try {
-          const { totalPages } = await processor.processFile(file);
-
-          // Emit initial file events
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_ADD,
-            file.name,
-            totalPages
-          );
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-            totalPages
-          );
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            ProcessingStatus.PROCESSING
-          );
-
-          // Prepare pages to process
-          const totalPagesArr = Array.from(
-            { length: totalPages },
-            (_, i) => i + 1
-          );
-
-          // Process pages and track failures
-          await Promise.allSettled(
-            totalPagesArr.map(async function (pageNum) {
-              if (abortSignal.aborted) {
-                throw new Error("Processing aborted");
-              }
-
-              const pageFailed = await processPageWithRetry(
-                file.name,
-                pageNum,
-                processor
-              );
-
-              // If any page fails, marks the file for failure
-              if (pageFailed) {
-                hasPageFailure = true;
-              }
-            })
-          );
-
-          // Cleanup after retries
-          failedPages.delete(file.name);
-
-          // Emit file-level status: FAILED if any page failed, else COMPLETED
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            hasPageFailure
-              ? ProcessingStatus.FAILED
-              : ProcessingStatus.COMPLETED
-          );
-        } catch (error) {
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            ProcessingStatus.FAILED
-          );
-          throw error;
-        } finally {
-          activeProcessors.delete(file.name);
-          processor.cleanup();
-          processNextPdf();
-        }
       }
 
       // Retry failed pages with exponential backoff and online check
@@ -301,14 +203,14 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
               console.warn(
                 `User offline. Pausing retries for ${fileName} page ${pageNumber}`
               );
-              //TODO: right now this display every 5secs
+              // TODO: Consider debouncing or limiting toast notifications
               toast.warning(
                 `User offline. Pausing retries for ${fileName} page ${pageNumber}`
               );
-              await delay(5000); // Checks again after 5 seconds
+              await delay(5000); // Check again after 5 seconds
             }
 
-            // Processing: Emit PAGE_PROCESSED event
+            // Emit PAGE_PROCESSED event for processing
             fileProcessingEmitter.emit(
               FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
               fileName,
@@ -331,13 +233,17 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
               data.url,
               ProcessingStatus.COMPLETED
             );
-            return false;
+            return false; // Page processed successfully
           } catch {
             console.warn(
               `Page ${pageNumber} of ${fileName} failed (Attempt: ${attempt})`
             );
 
-            // Failure: Track for retry
+            // Track failed pages for retry
+            const failedPages = new Map<
+              string,
+              { pageNumber: number; attempts: number }[]
+            >();
             if (!failedPages.has(fileName)) {
               failedPages.set(fileName, []);
             }
@@ -362,7 +268,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
                 null,
                 ProcessingStatus.FAILED
               );
-              return true;
+              return true; // Page failed after max retries
             }
 
             // Apply exponential backoff before the next attempt
@@ -373,49 +279,73 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         return true;
       }
 
-      // Kick off initial processing
-      for (let i = 0; i < MAX_CONCURRENT_FILES && pdfQueue.length > 0; i++) {
-        processNextPdf();
-      }
-    },
-    []);
-
-    /**
-     * Process Image Files Sequentially
-     */
-    async function processImages(
-      files: File[],
-      abortSignal: AbortSignal,
-      updateProgress: () => void,
-      state: { totalPages: number; processedPages: number }
-    ) {
-      state.totalPages = files.length;
-
-      for (const file of files) {
+      // Process a single PDF file
+      const processPdf = async (file: File) => {
         if (abortSignal.aborted) {
           throw new Error("Processing aborted");
         }
 
-        fileProcessingEmitter.emit(
-          FILE_PROCESSING_EVENTS.FILE_STATUS,
-          file.name,
-          ProcessingStatus.PROCESSING
-        );
+        const processor = new PDFProcessor({
+          maxConcurrent: 2,
+          pageBufferSize: 5,
+        });
 
         try {
-          const url = URL.createObjectURL(file);
-          addFile(file.name, 1);
-          addPageToFile(file.name, 1, url);
+          // Process the file to get total pages
+          const { totalPages } = await processor.processFile(file);
 
-          state.processedPages++;
-
+          // Emit initial file events
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_ADD,
+            file.name,
+            totalPages
+          );
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
+            totalPages
+          );
           fileProcessingEmitter.emit(
             FILE_PROCESSING_EVENTS.FILE_STATUS,
             file.name,
-            ProcessingStatus.COMPLETED
+            ProcessingStatus.PROCESSING
           );
 
-          updateProgress();
+          // Prepare pages to process
+          const totalPagesArr = Array.from(
+            { length: totalPages },
+            (_, i) => i + 1
+          );
+
+          // Process all pages with retry logic, respecting concurrency
+          const pageResults = await Promise.allSettled(
+            totalPagesArr.map((pageNum) =>
+              processPageWithRetry(file.name, pageNum, processor)
+            )
+          );
+
+          // Check for failed pages
+          const hasPageFailure = pageResults.some(
+            (result) => result.status === "rejected" || result.value === true
+          );
+
+          // If all pages failed, throw an error
+          const failedPagesCount = pageResults.filter(
+            (result) => result.status === "rejected" || result.value === true
+          ).length;
+          if (failedPagesCount === totalPages) {
+            throw new Error(
+              "An unexpected error occurred. Please try again later."
+            );
+          }
+
+          // Emit file status
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            hasPageFailure
+              ? ProcessingStatus.FAILED
+              : ProcessingStatus.COMPLETED
+          );
         } catch (error) {
           fileProcessingEmitter.emit(
             FILE_PROCESSING_EVENTS.FILE_STATUS,
@@ -423,9 +353,76 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
             ProcessingStatus.FAILED
           );
           throw error;
+        } finally {
+          processor.cleanup();
         }
+      };
+
+      // Create promises for each file, wrapped with concurrency limit
+      const processingPromises = files.map((file) =>
+        limit(() => processPdf(file))
+      );
+
+      console.log({ processingPromises });
+
+      try {
+        await Promise.all(processingPromises);
+      } catch (error) {
+        console.log("bug---------------------", error);
+        throw error;
       }
-    }
+    },
+    []);
+
+    /**
+     * Process Image Files Sequentially
+     */
+    const processImages = useCallback(
+      async function processImages(
+        files: File[],
+        abortSignal: AbortSignal,
+        updateProgress: () => void,
+        state: { totalPages: number; processedPages: number }
+      ) {
+        state.totalPages = files.length;
+
+        for (const file of files) {
+          if (abortSignal.aborted) {
+            throw new Error("Processing aborted");
+          }
+
+          fileProcessingEmitter.emit(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            file.name,
+            ProcessingStatus.PROCESSING
+          );
+
+          try {
+            const url = URL.createObjectURL(file);
+            addFile(file.name, 1);
+            addPageToFile(file.name, 1, url);
+
+            state.processedPages++;
+
+            fileProcessingEmitter.emit(
+              FILE_PROCESSING_EVENTS.FILE_STATUS,
+              file.name,
+              ProcessingStatus.COMPLETED
+            );
+
+            updateProgress();
+          } catch (error) {
+            fileProcessingEmitter.emit(
+              FILE_PROCESSING_EVENTS.FILE_STATUS,
+              file.name,
+              ProcessingStatus.FAILED
+            );
+            throw error;
+          }
+        }
+      },
+      [addFile, addPageToFile]
+    );
 
     /** Processes file list */
     const handleFiles = useCallback(
@@ -481,6 +478,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
         // Event listeners
         const onFileAdd = (fileName: string, totalPages: number) => {
+          console.log({ fileName, totalPages });
           addFile(fileName, totalPages);
         };
 
@@ -496,7 +494,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           }
 
           setPageStatus(fileName, pageNumber, status);
-          updateProgress();
+          // updateProgress();
         };
 
         const onFileStatus = (fileName: string, status: ProcessingStatus) => {
@@ -505,7 +503,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
         const onTotalPagesUpdate = (pages: number) => {
           state.totalPages += pages;
-          updateProgress();
+          // updateProgress();
         };
 
         fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
@@ -538,19 +536,19 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
                 state
               );
             }
-
-            processingRef.current = false;
-            closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+            console.log("did yu get----------------resolve");
             resolve();
           } catch (error) {
             if ((error as Error).message === "Processing aborted") {
               toast.dismiss("file-processing");
-              toast("Processing cancelled");
+              toast.error("Processing cancelled");
             } else {
+              console.log("did yu get----------------");
               reject(error);
             }
           } finally {
             processingRef.current = false;
+            closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
             fileProcessingEmitter.off(
               FILE_PROCESSING_EVENTS.FILE_STATUS,
               onFileStatus
@@ -584,7 +582,16 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           id: "file-processing",
         });
       },
-      [addFile, addPageToFile, animate, closePanel, setFileStatus]
+      [
+        addFile,
+        addPageToFile,
+        animate,
+        closePanel,
+        processImages,
+        processPdfsWithConcurrency,
+        setFileStatus,
+        setPageStatus,
+      ]
     );
 
     return (

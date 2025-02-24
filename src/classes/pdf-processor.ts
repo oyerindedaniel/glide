@@ -1,10 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-function-type */
 import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/processor";
-
-import * as pdfjsLib from "pdfjs-dist";
 import { PageProcessingConfig } from "@/types/processor";
 
+// Update ProcessingOptions to include onError callback
 interface ProcessingOptions {
   maxConcurrent: number;
   pageBufferSize: number;
@@ -14,6 +13,7 @@ interface ProcessingOptions {
     medium: PageProcessingConfig;
     large: PageProcessingConfig;
   };
+  onError?: (error: Error, pageNumber?: number) => void; // Added for central error handling
 }
 
 const DEFAULT_OPTIONS: ProcessingOptions = {
@@ -49,11 +49,11 @@ export class PDFProcessor {
   private activeProcessing: number;
   private abortController: AbortController | null;
   private processingConfig: PageProcessingConfig;
-  private pdf: pdfjsLib.PDFDocumentProxy | null = null;
-  private pdfData: Promise<ArrayBuffer>;
+  private onError?: (error: Error, pageNumber?: number) => void;
 
   constructor(options: Partial<ProcessingOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.onError = options.onError;
     this.worker = new Worker(
       new URL("../worker/pdf.worker.ts", import.meta.url)
     );
@@ -63,10 +63,19 @@ export class PDFProcessor {
     this.abortController = null;
 
     this.processingConfig = this.options.processingConfigs.small;
-    this.pdfData = Promise.resolve(new ArrayBuffer(0));
 
     this.setupWorkerMessageHandler();
     this.startCacheCleanupInterval();
+
+    // Handles unhandled worker errors
+    this.worker.onerror = (event) => {
+      const error = new Error(`Worker error: ${event.message}`);
+      // TODO: remove log
+      console.log(`Worker error: ${event.message}`);
+      this.onError?.(error);
+      // this.processingQueue.forEach((item) => item.reject(error));
+      // this.processingQueue = [];
+    };
   }
 
   private setupWorkerMessageHandler() {
@@ -94,16 +103,24 @@ export class PDFProcessor {
         this.activeProcessing--;
         this.processNextInQueue();
       } else if (e.data.type === WorkerMessageType.Error) {
-        const queueItem = this.processingQueue.find(
-          (item) => item.pageNumber === e.data.pageNumber
-        );
-        if (queueItem) {
-          queueItem.reject(new Error(e.data.error));
-          this.processingQueue = this.processingQueue.filter(
-            (item) => item.pageNumber !== e.data.pageNumber
+        const error = new Error(e.data.error);
+        if (e.data.pageNumber !== undefined) {
+          // Page-specific error
+          const queueItem = this.processingQueue.find(
+            (item) => item.pageNumber === e.data.pageNumber
           );
+          if (queueItem) {
+            queueItem.reject(error);
+            this.processingQueue = this.processingQueue.filter(
+              (item) => item.pageNumber !== e.data.pageNumber
+            );
+          }
+          this.activeProcessing--;
+          this.onError?.(error, e.data.pageNumber);
+        } else {
+          // General error
+          this.onError?.(error);
         }
-        this.activeProcessing--;
         this.processNextInQueue();
       }
     };
@@ -147,7 +164,6 @@ export class PDFProcessor {
       this.worker.postMessage({
         type: WorkerMessageType.ProcessPage,
         pageNumber: nextItem.pageNumber,
-        pageData: await this.pdfData,
         config: this.processingConfig,
       });
     }
@@ -164,22 +180,32 @@ export class PDFProcessor {
 
     this.abortController = new AbortController();
     this.processingConfig = this.getProcessingConfig(file.size);
-    this.pdfData = file.arrayBuffer();
+    const pdfData = await file.arrayBuffer();
 
-    this.pdf = await pdfjsLib.getDocument({ data: await this.pdfData }).promise;
+    return new Promise((resolve, reject) => {
+      const onMessage = (e: MessageEvent) => {
+        if (e.data.type === WorkerMessageType.PDFInitialized) {
+          this.worker.removeEventListener("message", onMessage);
+          resolve({
+            totalPages: e.data.totalPages,
+            status: ProcessingStatus.PROCESSING,
+          });
+        } else if (e.data.type === WorkerMessageType.Error) {
+          this.worker.removeEventListener("message", onMessage);
+          reject(new Error(e.data.error));
+        }
+      };
 
-    this.worker.postMessage(
-      {
-        type: WorkerMessageType.InitPDF,
-        pdfData: this.pdfData,
-      },
-      [this.pdfData]
-    );
+      this.worker.addEventListener("message", onMessage);
 
-    return {
-      totalPages: this.pdf.numPages,
-      status: ProcessingStatus.PROCESSING,
-    };
+      this.worker.postMessage(
+        {
+          type: WorkerMessageType.InitPDF,
+          pdfData,
+        },
+        [pdfData]
+      );
+    });
   }
 
   public async getPage(pageNumber: number): Promise<{
