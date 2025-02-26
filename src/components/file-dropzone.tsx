@@ -2,7 +2,14 @@
 "use client";
 
 import * as React from "react";
-import { forwardRef, useRef, useState, useEffect, useCallback } from "react";
+import {
+  forwardRef,
+  useRef,
+  useState,
+  useEffect,
+  useCallback,
+  startTransition,
+} from "react";
 import { FileUploadIcons } from "./file-upload-icons";
 import * as pdfjsLib from "pdfjs-dist";
 import { toast } from "sonner";
@@ -28,12 +35,12 @@ import {
 } from "@/constants/processing";
 import pLimit from "p-limit";
 
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).toString(); // Required for pdf.js worker
-}
+// if (typeof window !== "undefined") {
+//   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+//     "pdfjs-dist/build/pdf.worker.min.mjs",
+//     import.meta.url
+//   ).toString(); // Required for pdf.js worker
+// }
 
 // useEffect(() => {
 //   const loadPdfWorker = async () => {
@@ -205,7 +212,8 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
               );
               // TODO: Consider debouncing or limiting toast notifications
               toast.warning(
-                `User offline. Pausing retries for ${fileName} page ${pageNumber}`
+                `User offline. Pausing retries for ${fileName} page ${pageNumber}`,
+                { id: "is-online" }
               );
               await delay(5000); // Check again after 5 seconds
             }
@@ -363,12 +371,14 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         limit(() => processPdf(file))
       );
 
-      console.log({ processingPromises });
-
       try {
-        await Promise.all(processingPromises);
+        const results = await Promise.allSettled(processingPromises);
+
+        const errors = results.filter((r) => r.status === "rejected");
+        if (errors.length > 0) {
+          throw new Error("One or more files failed during processing.");
+        }
       } catch (error) {
-        console.log("bug---------------------", error);
         throw error;
       }
     },
@@ -478,8 +488,9 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
         // Event listeners
         const onFileAdd = (fileName: string, totalPages: number) => {
-          console.log({ fileName, totalPages });
-          addFile(fileName, totalPages);
+          startTransition(() => {
+            addFile(fileName, totalPages);
+          });
         };
 
         const onPageProcessed = function (
@@ -490,15 +501,21 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         ) {
           state.processedPages++;
           if (status === ProcessingStatus.COMPLETED && url) {
-            addPageToFile(fileName, pageNumber, url);
+            startTransition(() => {
+              addPageToFile(fileName, pageNumber, url);
+            });
           }
 
-          setPageStatus(fileName, pageNumber, status);
+          startTransition(() => {
+            setPageStatus(fileName, pageNumber, status);
+          });
           // updateProgress();
         };
 
         const onFileStatus = (fileName: string, status: ProcessingStatus) => {
-          setFileStatus(fileName, status);
+          startTransition(() => {
+            setFileStatus(fileName, status);
+          });
         };
 
         const onTotalPagesUpdate = (pages: number) => {
@@ -524,6 +541,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           try {
             if (isPDF) {
               if (uploadedFiles.length === 1) {
+                await processPdfsWithConcurrency(uploadedFiles, abortSignal);
                 // await processSinglePdf(uploadedFiles[0], abortSignal);
               } else {
                 await processPdfsWithConcurrency(uploadedFiles, abortSignal);
@@ -536,14 +554,12 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
                 state
               );
             }
-            console.log("did yu get----------------resolve");
             resolve();
           } catch (error) {
             if ((error as Error).message === "Processing aborted") {
               toast.dismiss("file-processing");
               toast.error("Processing cancelled");
             } else {
-              console.log("did yu get----------------");
               reject(error);
             }
           } finally {

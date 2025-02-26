@@ -1,9 +1,24 @@
-import * as pdfjsLib from "pdfjs-dist";
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import {
+  getDocument,
+  GlobalWorkerOptions,
+  PDFDocumentProxy,
+} from "pdfjs-dist/legacy/build/pdf.mjs";
 import { WorkerMessageType, PageProcessingConfig } from "@/types/processor";
+import { tryCatch } from "@/utils/error";
 
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-}
+const worker = new Worker(
+  new URL(
+    "../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    import.meta.url
+  )
+);
+GlobalWorkerOptions.workerPort = worker;
+
+const CMAP_URL = "../../node_modules/pdfjs-dist/cmaps";
+const CMAP_PACKED = true;
+const STANDARD_FONT_DATA_URL = "../../node_modules/pdfjs-dist/standard_fonts";
 
 export type WorkerMessage =
   | {
@@ -20,7 +35,7 @@ export type WorkerResponse =
   | {
       type: WorkerMessageType.PageProcessed;
       pageNumber: number;
-      blob: Blob;
+      blobData: ArrayBuffer;
       dimensions: { width: number; height: number };
     }
   | {
@@ -33,17 +48,58 @@ export type WorkerResponse =
       error: string;
     };
 
-let pdfDocument: pdfjsLib.PDFDocumentProxy | null = null;
+class WorkerCanvasFactory {
+  create(width: number, height: number) {
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    return { canvas, context };
+  }
+
+  reset(
+    canvasAndContext: { canvas: OffscreenCanvas },
+    width: number,
+    height: number
+  ) {
+    const { canvas } = canvasAndContext;
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  destroy(canvasContext: { canvas: OffscreenCanvas }) {
+    // No-op; OffscreenCanvas cleanup is handled by garbage collection
+  }
+}
+
+let pdfDocument: PDFDocumentProxy | null = null;
+
+const canvasFactory = new WorkerCanvasFactory();
+
+const document = {
+  fonts: self.fonts,
+  createElement: (name: any) => {
+    if (name == "canvas") {
+      return new OffscreenCanvas(1, 1);
+    }
+    return null;
+  },
+};
 
 self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
   try {
     switch (e.data.type) {
       case WorkerMessageType.InitPDF:
         try {
-          // Initializes the PDF document with the provided pdfData
-          pdfDocument = await pdfjsLib.getDocument({ data: e.data.pdfData })
-            .promise;
-
+          // Initialize the PDF document with the provided pdfData
+          pdfDocument = await getDocument({
+            data: e.data.pdfData,
+            // @ts-ignore
+            ownerDocument: document,
+            useWorkerFetch: true,
+            cMapUrl: CMAP_URL,
+            cMapPacked: CMAP_PACKED,
+            standardFontDataUrl: STANDARD_FONT_DATA_URL,
+          }).promise;
           self.postMessage({
             type: WorkerMessageType.PDFInitialized,
             totalPages: pdfDocument.numPages,
@@ -63,9 +119,10 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
 
         const { pageNumber, config } = e.data;
         const page = await pdfDocument.getPage(pageNumber);
+
         if (!page) throw new Error(`Page ${pageNumber} could not be retrieved`);
 
-        // Adjust viewport scale based on maxDimension constraintx
+        // Adjust viewport scale based on maxDimension constraint
         const originalViewport = page.getViewport({ scale: 1.0 });
         const scale = Math.min(
           config.maxDimension /
@@ -74,31 +131,39 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         );
 
         const viewport = page.getViewport({ scale });
-        const canvas = new OffscreenCanvas(viewport.width, viewport.height);
-        const context = canvas.getContext("2d", {
-          willReadFrequently: true,
-          alpha: false,
-        });
 
-        if (!context) throw new Error("Failed to get canvas context");
+        const canvasContext = canvasFactory.create(
+          viewport.width,
+          viewport.height
+        );
 
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
-        await page.render({ canvasContext: context, viewport }).promise;
+        if (!canvasContext) throw new Error("Failed to get canvas context");
 
-        const blob = await canvas.convertToBlob({
+        const { error } = await tryCatch(
+          page.render({
+            // @ts-ignore
+            canvasContext: canvasContext.context,
+            viewport,
+          }).promise
+        );
+
+        if (error?.raw) throw new Error("Failed to render PDF page.");
+
+        const blob = await canvasContext.canvas.convertToBlob({
           type: "image/webp",
           quality: config.quality,
         });
 
+        const arrayBuffer = await blob.arrayBuffer();
+
         const response: WorkerResponse = {
           type: WorkerMessageType.PageProcessed,
           pageNumber,
-          blob,
+          blobData: arrayBuffer,
           dimensions: { width: viewport.width, height: viewport.height },
         };
 
-        self.postMessage(response, [blob]);
+        self.postMessage(response, [arrayBuffer]);
         break;
 
       default:

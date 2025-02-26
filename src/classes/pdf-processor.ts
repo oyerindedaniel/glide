@@ -3,7 +3,8 @@ import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/processor";
 import { PageProcessingConfig } from "@/types/processor";
 
-// Update ProcessingOptions to include onError callback
+// const worker = new Worker("/pdf.worker.js", { type: "module" });
+
 interface ProcessingOptions {
   maxConcurrent: number;
   pageBufferSize: number;
@@ -13,7 +14,7 @@ interface ProcessingOptions {
     medium: PageProcessingConfig;
     large: PageProcessingConfig;
   };
-  onError?: (error: Error, pageNumber?: number) => void; // Added for central error handling
+  onError?: (error: Error, pageNumber?: number) => void;
 }
 
 const DEFAULT_OPTIONS: ProcessingOptions = {
@@ -81,8 +82,10 @@ export class PDFProcessor {
   private setupWorkerMessageHandler() {
     this.worker.onmessage = (e) => {
       if (e.data.type === WorkerMessageType.PageProcessed) {
-        const { pageNumber, blob, dimensions } = e.data;
+        const { pageNumber, blobData, dimensions } = e.data;
+        const blob = new Blob([blobData], { type: "image/webp" });
         const url = URL.createObjectURL(blob);
+
         this.pageCache.set(`page-${pageNumber}`, {
           url,
           lastAccessed: Date.now(),
@@ -104,6 +107,7 @@ export class PDFProcessor {
         this.processNextInQueue();
       } else if (e.data.type === WorkerMessageType.Error) {
         const error = new Error(e.data.error);
+        console.log("whatever", e.data.error);
         if (e.data.pageNumber !== undefined) {
           // Page-specific error
           const queueItem = this.processingQueue.find(
@@ -240,10 +244,10 @@ export class PDFProcessor {
 
   public cleanup() {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    for (const [_, value] of this.pageCache.entries()) {
-      URL.revokeObjectURL(value.url);
-    }
-    this.pageCache.clear();
+    // for (const [_, value] of this.pageCache.entries()) {
+    //   URL.revokeObjectURL(value.url);
+    // }
+    // this.pageCache.clear();
     this.worker.terminate();
   }
 }
