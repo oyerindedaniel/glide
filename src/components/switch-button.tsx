@@ -19,7 +19,7 @@ export function SwitchButton(props: SwitchButtonProps) {
   return (
     <div
       style={props.style}
-      className="absolute left-2/4 -translate-x-2/4 z-50 opacity-0 animate-fade-in [animation-delay:0.5s]"
+      className="absolute left-2/4 -translate-x-2/4 z-50 opacity-0 animate-[fade_300ms_ease-in_500ms_forwards]"
     >
       <Button
         variant="link"

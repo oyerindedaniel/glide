@@ -2,11 +2,9 @@
 /* @plugin "tailwindcss-animate"; */
 
 @theme {
-  --animate-fade-in: fade-in 0.5s ease-in-out forwards;
-  --animate-fade-out: fade-out 0.5s ease-in-out forwards;
-  --animate-panel-in: panel-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-  --animate-panel-out: panel-out 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-grow: grow 2s ease-out forwards;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
 
   --font-manrope: "Manrope", serif;
 
@@ -26,7 +24,7 @@
 
   --color-button-primary: #908a8a;
 
-  @keyframes panel-in {
+  @keyframes panel-slide {
     0% {
       opacity: 0;
       transform: translateY(20px);
@@ -37,32 +35,12 @@
     }
   }
 
-  @keyframes panel-out {
-    0% {
-      opacity: 1;
-      transform: translateY(0);
-    }
-    100% {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-  }
-
-  @keyframes fade-in {
+  @keyframes fade {
     0% {
       opacity: 0;
     }
     100% {
       opacity: 1;
-    }
-  }
-
-  @keyframes fade-out {
-    0% {
-      opacity: 1;
-    }
-    100% {
-      opacity: 0;
     }
   }
 
@@ -74,6 +52,24 @@
     100% {
       opacity: 1;
       transform: scale(1);
+    }
+  }
+
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
     }
   }
 }

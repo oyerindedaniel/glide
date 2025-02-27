@@ -12,7 +12,7 @@ export function DisplayProcessedFiles() {
       {Array.from(processedFiles.entries()).map(([fileName, pages]) => (
         <div key={fileName}>
           <h3>{fileName}</h3>
-          {Array.from(pages.entries()).map(([page, url]) => (
+          {Array.from(pages.entries()).map(([page, { url }]) => (
             <Image key={page} src={url} alt={`Page ${page}`} />
           ))}
         </div>

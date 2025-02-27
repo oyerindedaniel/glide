@@ -23,17 +23,17 @@ interface Props {
 export const PanelAbortProcessing: React.FC<Props> = ({
   handleAbortAndProcess,
 }) => {
-  const { getCurrentCenter, closePanel, openPanel } = usePanelStore();
-  const activePanel = getCurrentCenter();
+  const { getActivePanels, closePanel, openPanel } = usePanelStore();
+  const { right } = getActivePanels();
   const isMounted = useIsMounted();
 
-  const isOpen = activePanel === PANEL_IDS.ABORT_PROCESSING;
+  const isOpen = right === PANEL_IDS.ABORT_PROCESSING;
 
   const onOpenChange = (newOpen: boolean) => {
     if (newOpen) {
-      openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+      openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.RIGHT);
     } else {
-      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.RIGHT);
     }
   };
 
@@ -42,7 +42,7 @@ export const PanelAbortProcessing: React.FC<Props> = ({
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange}>
       <PanelContent
-        className="bottom-35 right-8 translate-x-0 translate-y-0 bg-black text-white max-w-80 w-full font-[family-name:var(--font-manrope)]"
+        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-black text-white max-w-80 w-full font-[family-name:var(--font-manrope)]"
         id="panel"
       >
         <PanelHeader>

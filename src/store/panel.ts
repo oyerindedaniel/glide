@@ -2,22 +2,27 @@ import { create } from "zustand";
 
 export enum PanelType {
   CENTER = "center",
+  LEFT = "left",
   RIGHT = "right",
 }
 
 interface PanelState {
   centerStack: string[]; // Stack for center panels
-  rightPanels: Set<string>; // Set for right panels
+  sidePanels: { left: string | null; right: string | null }; // Active left and right panels
 
   openPanel: (id: string, type: PanelType) => void;
   closePanel: (id: string, type: PanelType) => void;
   resetPanels: () => void;
-  getCurrentCenter: () => string | null; // Get the currently active center panel
+  getActivePanels: () => {
+    center: string | null;
+    left: string | null;
+    right: string | null;
+  };
 }
 
 export const usePanelStore = create<PanelState>((set, get) => ({
   centerStack: [],
-  rightPanels: new Set(),
+  sidePanels: { left: null, right: null },
 
   openPanel: (id, type) =>
     set((state) => {
@@ -29,11 +34,12 @@ export const usePanelStore = create<PanelState>((set, get) => ({
         newStack.push(id);
 
         return { centerStack: newStack };
-      } else {
-        const newRightPanels = new Set(state.rightPanels);
-        newRightPanels.add(id);
-        return { rightPanels: newRightPanels };
+      } else if (type === PanelType.LEFT) {
+        return { sidePanels: { ...state.sidePanels, left: id } };
+      } else if (type === PanelType.RIGHT) {
+        return { sidePanels: { ...state.sidePanels, right: id } };
       }
+      return state;
     }),
 
   closePanel: (id, type) =>
@@ -48,19 +54,26 @@ export const usePanelStore = create<PanelState>((set, get) => ({
         }
 
         return { centerStack: newStack };
-      } else {
-        const newRightPanels = new Set(state.rightPanels);
-        newRightPanels.delete(id);
-        return { rightPanels: newRightPanels };
+      } else if (type === PanelType.LEFT && state.sidePanels.left === id) {
+        return { sidePanels: { ...state.sidePanels, left: null } };
+      } else if (type === PanelType.RIGHT && state.sidePanels.right === id) {
+        return { sidePanels: { ...state.sidePanels, right: null } };
       }
+      return state;
     }),
 
-  resetPanels: () => set({ centerStack: [], rightPanels: new Set() }),
+  resetPanels: () =>
+    set({ centerStack: [], sidePanels: { left: null, right: null } }),
 
-  getCurrentCenter: () => {
+  getActivePanels: () => {
     const state = get();
-    return state.centerStack.length > 0
-      ? state.centerStack[state.centerStack.length - 1]
-      : null;
+    return {
+      center:
+        state.centerStack.length > 0
+          ? state.centerStack[state.centerStack.length - 1]
+          : null,
+      left: state.sidePanels.left,
+      right: state.sidePanels.right,
+    };
   },
 }));

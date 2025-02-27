@@ -193,6 +193,10 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         return navigator.onLine;
       }
 
+      setTimeout(() => {
+        toast.loading("Processing PDFs...", { id: "file-processing" });
+      }, 500);
+
       // Retry failed pages with exponential backoff and online check
       async function processPageWithRetry(
         fileName: string,
@@ -306,7 +310,8 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
           fileProcessingEmitter.emit(
             FILE_PROCESSING_EVENTS.FILE_ADD,
             file.name,
-            totalPages
+            totalPages,
+            { size: file.size, type: file.type }
           );
           fileProcessingEmitter.emit(
             FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
@@ -409,7 +414,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
           try {
             const url = URL.createObjectURL(file);
-            addFile(file.name, 1);
+            addFile(file.name, 1, { size: file.size, type: file.type });
             addPageToFile(file.name, 1, url);
 
             state.processedPages++;
@@ -487,9 +492,13 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         };
 
         // Event listeners
-        const onFileAdd = (fileName: string, totalPages: number) => {
+        const onFileAdd = (
+          fileName: string,
+          totalPages: number,
+          { size, type }: { size: number; type: string }
+        ) => {
           startTransition(() => {
-            addFile(fileName, totalPages);
+            addFile(fileName, totalPages, { size, type });
           });
         };
 
@@ -706,7 +715,7 @@ async function processPDF(
       data: await file.arrayBuffer(),
     }).promise;
     totalPages += pdf.numPages;
-    addFile(file.name, totalPages);
+    // addFile(file.name, totalPages);
 
     // Processes pages in chunks
     for (let i = 1; i <= pdf.numPages; i += CHUNK_SIZE) {

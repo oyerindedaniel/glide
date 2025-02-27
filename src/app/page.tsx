@@ -6,7 +6,7 @@ import { FileDropZone } from "@/components/file-dropzone";
 import { SearchInput } from "@/components/search-input";
 import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
-import ProgressUpload from "@/components/progress-upload";
+import ProgressUploadButton from "@/components/progress-upload-button";
 import { Panels } from "@/components/panels";
 import { useProcessedFilesStore } from "@/store/processed-files";
 
@@ -69,7 +69,7 @@ export default function Home() {
         style={{ top: switchButtonTop }}
         currentMode={mode}
       />
-      <ProgressUpload />
+      <ProgressUploadButton />
       <Panels />
     </Background>
   );

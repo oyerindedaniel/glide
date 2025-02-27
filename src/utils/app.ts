@@ -37,3 +37,20 @@ export const debounce = <T extends (...args: any[]) => void>(
     timeout = setTimeout(() => fn(...args), delay);
   };
 };
+
+/**
+ * Converts a file size from bytes to a human-readable format (MB or GB).
+ *
+ * @param {number} bytes - The file size in bytes.
+ * @returns {string} - The formatted file size in MB or GB.
+ */
+export function formatFileSize(bytes: number): string {
+  const MB = 1024 * 1024; // 1 MB = 1,048,576 bytes
+  const GB = MB * 1024; // 1 GB = 1,073,741,824 bytes
+
+  if (bytes >= GB) {
+    return `${(bytes / GB).toFixed(2)} GB`;
+  }
+
+  return `${(bytes / MB).toFixed(2)} MB`;
+}

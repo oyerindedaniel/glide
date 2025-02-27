@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useRef, useMemo, useEffect } from "react";
+import React, { memo, useRef, useMemo, useEffect, useState } from "react";
 import Image from "next/image";
 import { useProcessedFilesStore } from "@/store/processed-files";
 import { useDropAnimationStore } from "@/store/drop-animation-store";
@@ -9,24 +9,38 @@ import {
   ANIMATION_DURATION,
   ANIMATION_EASING,
 } from "@/constants/drop-animation";
+import { PanelType, usePanelStore } from "@/store/panel";
+import { PANEL_IDS } from "@/constants/panel";
+import { cn } from "@/lib/utils";
 
 /**
- * ProgressUpload Component
- * Displays an upload progress bar.
+ * ProgressUploadButton Component
+ * A button that triggers the upload progress panel.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-interface ProgressUploadProps {}
+interface ProgressUploadButtonProps {}
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function ProgressUpload(props: ProgressUploadProps) {
+export function ProgressUploadButton(props: ProgressUploadButtonProps) {
   const totalFiles = useProcessedFilesStore((state) => state.totalFiles);
   const { isDragging, setSnapPosition, setNodeRef, snapPosition } =
     useDropAnimationStore();
+  const { openPanel, getActivePanels } = usePanelStore();
 
-  const elementRef = useRef<HTMLDivElement>(null);
+  const { center } = getActivePanels();
+
+  const [hasPanelBeenOpened, setHasPanelBeenOpened] = useState(false);
+
+  const elementRef = useRef<HTMLButtonElement>(null);
   const snapToelementRef = useRef<HTMLDivElement>(null);
   const animateItemRef = useRef<HTMLImageElement>(null);
+
+  const isProcessedFiles = Boolean(totalFiles);
+
+  const isOpen = center === PANEL_IDS.PROGRESS_UPLOAD;
+
+  const state = isOpen ? "open" : "closed";
 
   const isActive = useMemo(
     () => isDragging || totalFiles > 0,
@@ -105,6 +119,12 @@ export function ProgressUpload(props: ProgressUploadProps) {
     }
   }, [setNodeRef]);
 
+  useEffect(() => {
+    if (isOpen && !hasPanelBeenOpened) {
+      setHasPanelBeenOpened(true);
+    }
+  }, [isOpen, hasPanelBeenOpened]);
+
   return (
     <>
       <Image
@@ -117,10 +137,19 @@ export function ProgressUpload(props: ProgressUploadProps) {
         height={84}
       />
       {isPresent && (
-        <div
+        <button
+          onClick={() => openPanel(PANEL_IDS.PROGRESS_UPLOAD, PanelType.CENTER)}
+          disabled={!isProcessedFiles}
           data-present={isActive}
+          data-dropped={isProcessedFiles || undefined}
+          data-state={state}
           ref={elementRef}
-          className="absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer"
+          className={cn(
+            "group absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer",
+            isProcessedFiles && !hasPanelBeenOpened
+              ? "data-dropped:animate-bounce"
+              : ""
+          )}
         >
           <div className="relative">
             <Image
@@ -134,16 +163,15 @@ export function ProgressUpload(props: ProgressUploadProps) {
             />
             <span
               ref={snapToelementRef}
-              data-animate={Boolean(totalFiles) || undefined}
-              className="absolute top-0 right-0 opacity-0 scale-90 data-animate:opacity-100 data-animate:scale-100 transition-all ease-in-out duration-500 delay-250 -translate-y-2/4 translate-x-2/4 bg-white w-5 h-5 text-xs inline-flex items-center justify-center aspect-square rounded-full border border-primary text-primary font-bold"
+              className="absolute top-0 right-0 opacity-0 scale-90 group-data-dropped:opacity-100 group-data-dropped:scale-100 transition-all ease-in-out duration-500 delay-250 -translate-y-2/4 translate-x-2/4 bg-white w-5 h-5 text-xs inline-flex items-center justify-center aspect-square rounded-full border border-primary text-primary font-bold"
             >
               {totalFiles}
             </span>
           </div>
-        </div>
+        </button>
       )}
     </>
   );
 }
 
-export default memo(ProgressUpload);
+export default memo(ProgressUploadButton);

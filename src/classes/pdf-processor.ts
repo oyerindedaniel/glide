@@ -107,7 +107,6 @@ export class PDFProcessor {
         this.processNextInQueue();
       } else if (e.data.type === WorkerMessageType.Error) {
         const error = new Error(e.data.error);
-        console.log("whatever", e.data.error);
         if (e.data.pageNumber !== undefined) {
           // Page-specific error
           const queueItem = this.processingQueue.find(

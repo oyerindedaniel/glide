@@ -300,8 +300,8 @@ const PanelContent = React.forwardRef<
         aria-describedby={descriptionId}
         className={cn(
           "fixed bg-white p-5 shadow-lg sm:rounded-xl z-1000",
-          "data-[state=open]:animate-panel-in",
-          "data-[state=closed]:animate-panel-out",
+          "data-[state=open]:animate-[panel-slide_250ms_ease-in_forwards]",
+          "data-[state=closed]:animate-[panel-slide_125ms_ease-out_reverse_forwards]",
           "",
           className
         )}
