@@ -13,8 +13,6 @@ export enum ProcessingStatus {
 interface PageStatus {
   url: string;
   status: ProcessingStatus;
-  size: number;
-  type: string;
 }
 
 /**
@@ -23,6 +21,7 @@ interface PageStatus {
 interface ProcessedFileState {
   processedFiles: Map<string, Map<number, PageStatus>>;
   fileStatus: Map<string, ProcessingStatus>;
+  fileMetadata: Map<string, { size: number; type: string }>;
   totalFiles: number;
   allFilesProcessed: boolean;
   statusCounts: Record<ProcessingStatus, number>;
@@ -31,7 +30,7 @@ interface ProcessedFileState {
   addFile: (
     fileName: string,
     totalPages: number,
-    { size, type }: Pick<PageStatus, "size" | "type">
+    metadata: { size: number; type: string }
   ) => void;
   addPageToFile: (
     fileName: string,
@@ -63,6 +62,7 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
   (set, get) => ({
     processedFiles: new Map(),
     fileStatus: new Map(),
+    fileMetadata: new Map(),
     totalFiles: 0,
     allFilesProcessed: false,
     statusCounts: {
@@ -75,31 +75,34 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
     /**
      * Adds a new file with a NOT_STARTED status and prepares its pages.
      */
-    addFile: (fileName, totalPages, { size, type }) => {
+    addFile: (fileName, totalPages, metadata) => {
       set((state) => {
         const newProcessedFiles = new Map(state.processedFiles);
         const newFileStatus = new Map(state.fileStatus);
+        const newFileMetadata = new Map(state.fileMetadata);
 
         if (!newProcessedFiles.has(fileName)) {
           const pages = new Map<number, PageStatus>();
           for (let i = 1; i <= totalPages; i++) {
             pages.set(i, {
               url: "",
-              type,
-              size,
               status: ProcessingStatus.NOT_STARTED,
             });
           }
           newProcessedFiles.set(fileName, pages);
           newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
+          newFileMetadata.set(fileName, metadata);
         }
 
-        return { processedFiles: newProcessedFiles, fileStatus: newFileStatus };
+        return {
+          processedFiles: newProcessedFiles,
+          fileStatus: newFileStatus,
+          fileMetadata: newFileMetadata,
+        };
       });
 
       get().computeStatusCounts();
     },
-
     /**
      * Adds or updates a page URL and its status (default is COMPLETED).
      */
@@ -115,14 +118,7 @@ export const useProcessedFilesStore = create<ProcessedFileState>(
           newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
         const newFilePages = new Map<number, PageStatus>(filePages);
 
-        const existingPage = newFilePages.get(pageNumber);
-
-        newFilePages.set(pageNumber, {
-          url,
-          status,
-          size: existingPage?.size || 0,
-          type: existingPage?.type || "",
-        });
+        newFilePages.set(pageNumber, { url, status });
         newProcessedFiles.set(fileName, newFilePages);
 
         return { processedFiles: newProcessedFiles };

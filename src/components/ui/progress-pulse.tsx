@@ -11,21 +11,18 @@ import {
 import { cn } from "@/lib/utils";
 import { ProcessingStatus } from "@/store/processed-files";
 
-// Props for the root component
 interface ProgressPulseRootProps {
   status: ProcessingStatus;
   className?: string;
   children: React.ReactNode;
 }
 
-// Context to share status
 const ProgressPulseContext = createContext<{
   status: ProcessingStatus;
 }>({
   status: ProcessingStatus.NOT_STARTED,
 });
 
-// Root component
 const ProgressPulseRoot: React.FC<ProgressPulseRootProps> = ({
   status,
   className,
@@ -33,20 +30,19 @@ const ProgressPulseRoot: React.FC<ProgressPulseRootProps> = ({
 }) => {
   return (
     <ProgressPulseContext.Provider value={{ status }}>
-      <div className={cn("relative", className)}>{children}</div>
+      <div className={cn("", className)}>{children}</div>
     </ProgressPulseContext.Provider>
   );
 };
 ProgressPulseRoot.displayName = "ProgressPulseRoot";
 
-// Status configuration
 const statusConfig = {
   [ProcessingStatus.NOT_STARTED]: {
     text: "Not Started",
     bgColor: "bg-gray-600",
   },
   [ProcessingStatus.PROCESSING]: {
-    text: "Processing",
+    text: "Pending",
     bgColor: "bg-blue-600",
   },
   [ProcessingStatus.COMPLETED]: {
@@ -63,6 +59,8 @@ interface ProgressPulseContentProps {
   className?: string;
 }
 
+const widthCache = new Map<string, number>();
+
 const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
   className,
 }) => {
@@ -71,13 +69,24 @@ const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
-    if (containerRef.current) {
-      const container = containerRef.current;
-      const originalWidth = container.style.width;
-      container.style.width = "auto"; // Temporarily set to auto to measure
-      const newWidth = container.offsetWidth;
-      container.style.width = originalWidth; // Restore original
-      setWidth(newWidth);
+    const container = containerRef?.current;
+    if (container) {
+      let newWidth: number;
+
+      if (widthCache.has(status)) {
+        newWidth = widthCache.get(status)!;
+      } else {
+        container.style.transition = "none";
+        container.style.width = "auto";
+        newWidth = container.offsetWidth;
+        widthCache.set(status, newWidth);
+      }
+
+      container.style.width = "0px";
+      container.style.transition = "width 0.5s ease";
+      React.startTransition(() => {
+        setWidth(newWidth);
+      });
     }
   }, [status]);
 
@@ -89,22 +98,20 @@ const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
       role="status"
       aria-live="polite"
       className={cn(
-        "px-2 py-1 rounded text-white whitespace-nowrap overflow-hidden transition-[width] duration-300 ease-in-out",
+        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-white whitespace-nowrap overflow-hidden",
         bgColor,
-        "w-[var(--indicator-width)]",
         className
       )}
-      style={
-        {
-          "--indicator-width": `${width}px`,
-        } as React.CSSProperties
-      }
+      style={{
+        width: `${width}px`,
+        transition: "width 0.5s ease",
+      }}
     >
       <span
         className="inline-block"
         style={{
           transform: `translateX(${width === 0 ? "100%" : "0"})`,
-          transition: "transform 0.3s ease-in-out",
+          transition: "transform 0.5s ease-in-out",
         }}
       >
         {text}

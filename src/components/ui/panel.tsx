@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import { mergeRefs } from "@/utils/react";
 import { useAnimatePresence } from "@/hooks/use-animate-presence";
 import { Button } from "./button";
+import { X } from "lucide-react";
 
 // Selector for focusable elements
 const focusableSelector = [
@@ -114,6 +115,8 @@ const PanelRoot = React.forwardRef<
       },
       { animateOnInitialLoad: false }
     );
+
+    // console.log({})
 
     return (
       <PanelContext.Provider
@@ -300,8 +303,8 @@ const PanelContent = React.forwardRef<
         aria-describedby={descriptionId}
         className={cn(
           "fixed bg-white p-5 shadow-lg sm:rounded-xl z-1000",
-          "data-[state=open]:animate-[panel-slide_250ms_ease-in_forwards]",
-          "data-[state=closed]:animate-[panel-slide_125ms_ease-out_reverse_forwards]",
+          "data-[state=open]:animate-panel-in",
+          "data-[state=closed]:animate-panel-out",
           "",
           className
         )}
@@ -310,6 +313,9 @@ const PanelContent = React.forwardRef<
         {...props}
       >
         {children}
+        <PanelClose className="absolute p-0 h-fit w-fit !bg-transparent right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 data-[state=open]:bg-accent">
+          <X className="h-4 w-4 text-white" />
+        </PanelClose>
       </div>
     </PanelPortal>
   );
@@ -410,7 +416,11 @@ const PanelAction = React.forwardRef<
   HTMLButtonElement,
   React.ComponentProps<typeof Button>
 >(({ children, className, ...props }, ref) => (
-  <Button ref={ref} className={cn("", className)} {...props}>
+  <Button
+    ref={ref}
+    className={cn("disabled:pointer-events-none", className)}
+    {...props}
+  >
     {children}
   </Button>
 ));
@@ -420,7 +430,7 @@ const PanelClose = React.forwardRef<
   HTMLButtonElement,
   React.ComponentProps<typeof Button>
 >(({ children, className, onClick, ...props }, ref) => {
-  const { onOpenChange } = React.useContext(PanelContext);
+  const { onOpenChange, state } = React.useContext(PanelContext);
   const handleClick = React.useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       onClick?.(event);
@@ -430,9 +440,10 @@ const PanelClose = React.forwardRef<
   );
   return (
     <Button
+      data-state={state}
       ref={ref}
       onClick={handleClick}
-      className={cn("", className)}
+      className={cn("disabled:pointer-events-none", className)}
       {...props}
     >
       {children}

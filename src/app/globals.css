@@ -3,8 +3,10 @@
 
 @theme {
   --animate-grow: grow 2s ease-out forwards;
-  --animate-accordion-down: accordion-down 0.2s ease-out;
-  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-accordion-down: accordion-down 0.65s ease-out;
+  --animate-accordion-up: accordion-up 0.65s ease-out;
+  --animate-panel-in: panel-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  --animate-panel-out: panel-out 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 
   --font-manrope: "Manrope", serif;
 
@@ -21,6 +23,8 @@
   --color-input: #e2e8f0;
   --color-accent: #f1f5f9;
   --color-accent-foreground: #0f172a;
+  --color-ring: #d4d4d4;
+  --color-border: #262626;
 
   --color-button-primary: #908a8a;
 
@@ -70,6 +74,28 @@
     }
     to {
       height: 0;
+    }
+  }
+
+  @keyframes panel-in {
+    0% {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes panel-out {
+    0% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    100% {
+      opacity: 0;
+      transform: translateY(20px);
     }
   }
 }

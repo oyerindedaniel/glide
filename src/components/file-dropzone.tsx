@@ -22,7 +22,7 @@ import { useDropAnimationStore } from "@/store/drop-animation-store";
 import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { cn } from "@/lib/utils";
 import { mergeRefs } from "@/utils/react";
-import { PanelAbortProcessing } from "./panels/panel-abort-processing";
+import { PanelAbortProcessing } from "./panels/abort-processing";
 import { usePanelStore, PanelType } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
 import { PDFProcessor } from "@/classes/pdf-processor";
@@ -79,6 +79,7 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       setFileStatus,
       setPageStatus,
       reset,
+      processedFiles,
     } = useProcessedFilesStore();
     const {
       setIsDragging: setIsDraggingStore,
@@ -122,28 +123,6 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
       setDropPosition(newX, newY);
     }, [setDropPosition]);
-
-    /** Handles new file upload while processing */
-    const handleNewUploadRequest = (files: FileList) => {
-      if (processingRef.current) {
-        pendingFiles.current = files;
-        openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
-      } else {
-        handleFiles(files);
-      }
-    };
-
-    /** Abort current processing and start new */
-    const handleAbortAndProcess = () => {
-      abortControllerRef.current?.abort();
-      processingRef.current = false;
-      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
-      reset();
-      if (pendingFiles.current) {
-        handleFiles(pendingFiles.current);
-        pendingFiles.current = null;
-      }
-    };
 
     /** Handles drag events to show overlay */
     const handleDrag = useCallback(
@@ -442,7 +421,10 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     /** Processes file list */
     const handleFiles = useCallback(
       async (files: FileList) => {
+        console.log("in you are suyy1");
         if (processingRef.current) return;
+
+        console.log("in you are suyy2");
 
         processingRef.current = true;
 
@@ -462,6 +444,16 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         if (fileTypes.size > 1) {
           toast("Please upload files of the same type (either images or PDF).");
           return;
+        }
+
+        for (const file of uploadedFiles) {
+          if (processedFiles.has(file.name)) {
+            const pages = processedFiles.get(file.name);
+            if (pages && Array.from(pages.values()).every((page) => page.url)) {
+              toast(`File "${file.name}" is already uploaded.`);
+              return;
+            }
+          }
         }
 
         // animation
@@ -614,10 +606,36 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         closePanel,
         processImages,
         processPdfsWithConcurrency,
+        processedFiles,
         setFileStatus,
         setPageStatus,
       ]
     );
+
+    /** Handles new file upload while processing */
+    const handleNewUploadRequest = useCallback(
+      (files: FileList) => {
+        if (processingRef.current) {
+          pendingFiles.current = files;
+          openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+        } else {
+          handleFiles(files);
+        }
+      },
+      [handleFiles, openPanel]
+    );
+
+    /** Abort current processing and start new */
+    const handleAbortAndProcess = useCallback(() => {
+      abortControllerRef.current?.abort();
+      processingRef.current = false;
+      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+      reset();
+      if (pendingFiles.current) {
+        handleFiles(pendingFiles.current);
+        pendingFiles.current = null;
+      }
+    }, [closePanel, handleFiles, reset]);
 
     return (
       <>
@@ -769,72 +787,76 @@ async function processPDF(
 }
 
 /** Drag Overlay Component */
-const DropOverlay = forwardRef<
-  HTMLDivElement,
-  {
-    isDragging: boolean;
-    onDragEvent: (e: React.DragEvent) => void;
-    onFilesDropped: (files: FileList) => void;
-  }
->(({ isDragging, onDragEvent, onFilesDropped }, ref) => {
-  const setDropPosition = useDropAnimationStore(
-    (state) => state.setDropPosition
-  );
+const DropOverlay = React.memo(
+  forwardRef<
+    HTMLDivElement,
+    {
+      isDragging: boolean;
+      onDragEvent: (e: React.DragEvent) => void;
+      onFilesDropped: (files: FileList) => void;
+    }
+  >(({ isDragging, onDragEvent, onFilesDropped }, ref) => {
+    const setDropPosition = useDropAnimationStore(
+      (state) => state.setDropPosition
+    );
 
-  return (
-    <div
-      ref={ref}
-      role="region"
-      aria-label="File drop zone"
-      className={cn(
-        `drop-overlay absolute inset-0 transition-opacity duration-300 
-        border-2 border-dashed border-primary rounded-lg`,
-        isDragging ? "opacity-100 bg-primary/20" : "opacity-0"
-      )}
-      onDragOver={onDragEvent}
-      onDragLeave={onDragEvent}
-      onDrop={(e) => {
-        onDragEvent(e);
-        if (e.dataTransfer.files.length > 0) {
-          const { clientX: x, clientY: y } = e;
-          setDropPosition(x, y);
-          onFilesDropped(e.dataTransfer.files);
-        }
-      }}
-    />
-  );
-});
+    return (
+      <div
+        ref={ref}
+        role="region"
+        aria-label="File drop zone"
+        className={cn(
+          `drop-overlay absolute inset-0 transition-opacity duration-300 
+          border-2 border-dashed border-primary rounded-lg`,
+          isDragging ? "opacity-100 bg-primary/20" : "opacity-0"
+        )}
+        onDragOver={onDragEvent}
+        onDragLeave={onDragEvent}
+        onDrop={(e) => {
+          onDragEvent(e);
+          if (e.dataTransfer.files.length > 0) {
+            const { clientX: x, clientY: y } = e;
+            setDropPosition(x, y);
+            onFilesDropped(e.dataTransfer.files);
+          }
+        }}
+      />
+    );
+  })
+);
 
 DropOverlay.displayName = "DropOverlay";
 
 /** Upload Area Component */
-const UploadArea = forwardRef<
-  HTMLDivElement,
-  {
-    onClick: () => void;
-    isDragging: boolean;
-    uploadAreaRef: React.RefObject<HTMLDivElement | null>;
-  }
->(({ onClick, isDragging, uploadAreaRef }, ref) => (
-  <div
-    ref={mergeRefs(ref, uploadAreaRef)}
-    role="button"
-    tabIndex={0}
-    className={cn(
-      "w-fit left-2/4 -translate-x-2/4 absolute top-[30%] cursor-pointer",
-      isDragging ? "pointer-events-none hidden" : "pointer-events-auto"
-    )}
-    onClick={onClick}
-    onKeyDown={(e) => e.key === "Enter" && onClick()}
-  >
-    <FileUploadIcons />
-    <div className="space-y-2 font-[family-name:var(--font-manrope)] text-center text-sm mt-5">
-      <p className="font-medium">Drag & drop files here</p>
-      <p className="text-sm text-muted-foreground">
-        Supported formats: PNG, JPG, PDF
-      </p>
+const UploadArea = React.memo(
+  forwardRef<
+    HTMLDivElement,
+    {
+      onClick: () => void;
+      isDragging: boolean;
+      uploadAreaRef: React.RefObject<HTMLDivElement | null>;
+    }
+  >(({ onClick, isDragging, uploadAreaRef }, ref) => (
+    <div
+      ref={mergeRefs(ref, uploadAreaRef)}
+      role="button"
+      tabIndex={0}
+      className={cn(
+        "w-fit left-2/4 -translate-x-2/4 absolute top-[30%] cursor-pointer",
+        isDragging ? "pointer-events-none hidden" : "pointer-events-auto"
+      )}
+      onClick={onClick}
+      onKeyDown={(e) => e.key === "Enter" && onClick()}
+    >
+      <FileUploadIcons />
+      <div className="space-y-2 font-[family-name:var(--font-manrope)] text-center text-sm mt-5">
+        <p className="font-medium">Drag & drop files here</p>
+        <p className="text-sm text-muted-foreground">
+          Supported formats: PNG, JPG, PDF
+        </p>
+      </div>
     </div>
-  </div>
-));
+  ))
+);
 
 UploadArea.displayName = "UploadArea";
