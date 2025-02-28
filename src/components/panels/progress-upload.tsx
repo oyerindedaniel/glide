@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useCallback, useEffect } from "react";
+import React, { memo, useCallback, useEffect, useState } from "react";
 import {
   Panel,
   PanelContent,
@@ -46,6 +46,7 @@ export function ProgressUpload() {
     reorderPages,
   } = useProcessedFilesStore();
   const { getActivePanels, closePanel, openPanel } = usePanelStore();
+  const [openAccordions, setOpenAccordions] = useState<string[]>([]);
   const { center } = getActivePanels();
 
   const isOpen = center === PANEL_IDS.PROGRESS_UPLOAD;
@@ -97,6 +98,10 @@ export function ProgressUpload() {
     }
   };
 
+  const handleDragStart = () => {
+    setOpenAccordions([]);
+  };
+
   const isSortingDisabled = (
     status: ProcessingStatus,
     itemCount: number
@@ -138,6 +143,7 @@ export function ProgressUpload() {
                 items={Array.from(processedFiles.keys()).map((fileName) => ({
                   id: fileName,
                 }))}
+                onDragStart={handleDragStart}
                 onDragEnd={handleFileDragEnd}
               >
                 {Array.from(processedFiles.entries()).map(
@@ -161,7 +167,12 @@ export function ProgressUpload() {
                           }}
                         >
                           {fileType === FILE_INPUT_TYPES.PDF ? (
-                            <Accordion type="multiple" className="w-full">
+                            <Accordion
+                              type="multiple"
+                              className="w-full"
+                              value={openAccordions}
+                              onValueChange={setOpenAccordions}
+                            >
                               <AccordionItem
                                 value={fileName}
                                 className="w-full"

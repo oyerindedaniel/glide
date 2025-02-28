@@ -1,7 +1,7 @@
-import type React from "react";
+import * as React from "react";
 import Image from "next/image";
 
-export const FileUploadIcons: React.FC = () => (
+export const FileUploadIcons = React.memo(() => (
   <div className="flex items-center pointer-events-none select-none">
     <Image
       className="relative -rotate-[14.39deg] z-0 translate-x-5 translate-y-2.5 w-24 pointer-events-none select-none"
@@ -31,4 +31,6 @@ export const FileUploadIcons: React.FC = () => (
       unoptimized
     />
   </div>
-);
+));
+
+FileUploadIcons.displayName = "FileUploadIcons";

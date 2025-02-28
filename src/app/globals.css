@@ -3,8 +3,8 @@
 
 @theme {
   --animate-grow: grow 2s ease-out forwards;
-  --animate-accordion-down: accordion-down 0.65s ease-out;
-  --animate-accordion-up: accordion-up 0.65s ease-out;
+  --animate-accordion-down: accordion-down 0.35s ease-out;
+  --animate-accordion-up: accordion-up 0.35s ease-out;
   --animate-panel-in: panel-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-panel-out: panel-out 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 

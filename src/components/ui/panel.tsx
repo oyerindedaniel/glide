@@ -8,6 +8,7 @@ import { mergeRefs } from "@/utils/react";
 import { useAnimatePresence } from "@/hooks/use-animate-presence";
 import { Button } from "./button";
 import { X } from "lucide-react";
+import { useStableHandler } from "@/hooks/use-stable-handler";
 
 // Selector for focusable elements
 const focusableSelector = [
@@ -79,15 +80,20 @@ const PanelRoot = React.forwardRef<
 
     const triggerRef = React.useRef<HTMLButtonElement>(null);
 
+    const stableOnOpenChange = useStableHandler(onOpenChange);
+
     const state = isOpen ? "open" : "closed";
 
-    const handleOpenChange = (newOpen: boolean) => {
-      if (isControlled) {
-        onOpenChange?.(newOpen);
-      } else {
-        setInternalOpen(newOpen);
-      }
-    };
+    const handleOpenChange = React.useCallback(
+      (newOpen: boolean) => {
+        if (isControlled) {
+          stableOnOpenChange?.(newOpen);
+        } else {
+          setInternalOpen(newOpen);
+        }
+      },
+      [isControlled, stableOnOpenChange]
+    );
 
     const isPresent = useAnimatePresence(
       isOpen,
@@ -145,28 +151,31 @@ const PanelRoot = React.forwardRef<
 );
 PanelRoot.displayName = "PanelRoot";
 
-const PanelOverlay = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const { onOpenChange, state } = React.useContext(PanelContext);
-  return (
-    <div
-      data-state={state}
-      ref={ref}
-      className={cn(
-        "fixed inset-0 bg-black/50 z-50 data-[state=open]:fade-in data-[state=closed]:fade-out",
-        className
-      )}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onOpenChange?.(false);
-        }
-      }}
-      {...props}
-    />
-  );
-});
+const PanelOverlay = React.memo(
+  React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+    ({ className, ...props }, ref) => {
+      const { onOpenChange, state } = React.useContext(PanelContext);
+
+      return (
+        <div
+          data-state={state}
+          ref={ref}
+          className={cn(
+            "fixed inset-0 bg-black/50 z-50 data-[state=open]:fade-in data-[state=closed]:fade-out",
+            className
+          )}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              onOpenChange?.(false);
+            }
+          }}
+          {...props}
+        />
+      );
+    }
+  )
+);
+
 PanelOverlay.displayName = "PanelOverlay";
 
 const PanelTrigger = React.forwardRef<
@@ -203,6 +212,7 @@ PanelTrigger.displayName = "PanelTrigger";
 const PanelPortal = ({ children }: { children: React.ReactNode }) => {
   return isWindowDefined() ? createPortal(children, document.body) : null;
 };
+
 PanelPortal.displayName = "PanelPortal";
 
 const PanelContent = React.forwardRef<
@@ -322,94 +332,101 @@ const PanelContent = React.forwardRef<
 });
 PanelContent.displayName = "PanelContent";
 
-const PanelHeader = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const { state } = React.useContext(PanelContext);
-  return (
-    <div
-      data-state={state}
-      ref={ref}
-      className={cn("group/header p-2", className)}
-      {...props}
-    />
-  );
-});
+const PanelHeader = React.memo(
+  React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+    ({ className, ...props }, ref) => {
+      const { state } = React.useContext(PanelContext);
+      return (
+        <div
+          data-state={state}
+          ref={ref}
+          className={cn("group/header p-2", className)}
+          {...props}
+        />
+      );
+    }
+  )
+);
 PanelHeader.displayName = "PanelHeader";
 
-const PanelBody = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const { state } = React.useContext(PanelContext);
-  return (
-    <div
-      data-state={state}
-      ref={ref}
-      className={cn("group/body p-2", className)}
-      {...props}
-    />
-  );
-});
+const PanelBody = React.memo(
+  React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+    ({ className, ...props }, ref) => {
+      const { state } = React.useContext(PanelContext);
+      return (
+        <div
+          data-state={state}
+          ref={ref}
+          className={cn("group/body p-2", className)}
+          {...props}
+        />
+      );
+    }
+  )
+);
 PanelBody.displayName = "PanelBody";
 
-const PanelFooter = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => {
-  const { state } = React.useContext(PanelContext);
-  return (
-    <div
-      data-state={state}
-      ref={ref}
-      className={cn("group/footer p-2", className)}
-      {...props}
-    />
-  );
-});
+const PanelFooter = React.memo(
+  React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
+    ({ className, ...props }, ref) => {
+      const { state } = React.useContext(PanelContext);
+      return (
+        <div
+          data-state={state}
+          ref={ref}
+          className={cn("group/footer p-2", className)}
+          {...props}
+        />
+      );
+    }
+  )
+);
 PanelFooter.displayName = "PanelFooter";
 
-const PanelTitle = React.forwardRef<
-  HTMLHeadingElement,
-  React.HTMLAttributes<HTMLHeadingElement> & { id?: string }
->(({ className, id, ...props }, ref) => {
-  const generatedId = React.useId();
-  const finalId = id || generatedId;
-  const { setTitleId } = React.useContext(PanelContext);
-  React.useEffect(() => {
-    setTitleId?.(finalId);
-  }, [finalId, setTitleId]);
-  return (
-    <h2
-      ref={ref}
-      id={finalId}
-      className={cn("text-lg font-semibold", className)}
-      {...props}
-    />
-  );
-});
+const PanelTitle = React.memo(
+  React.forwardRef<
+    HTMLHeadingElement,
+    React.HTMLAttributes<HTMLHeadingElement> & { id?: string }
+  >(({ className, id, ...props }, ref) => {
+    const generatedId = React.useId();
+    const finalId = id || generatedId;
+    const { setTitleId } = React.useContext(PanelContext);
+    React.useEffect(() => {
+      setTitleId?.(finalId);
+    }, [finalId, setTitleId]);
+    return (
+      <h2
+        ref={ref}
+        id={finalId}
+        className={cn("text-lg font-semibold", className)}
+        {...props}
+      />
+    );
+  })
+);
 PanelTitle.displayName = "PanelTitle";
 
-const PanelDescription = React.forwardRef<
-  HTMLParagraphElement,
-  React.HTMLAttributes<HTMLParagraphElement> & { id?: string }
->(({ className, id, ...props }, ref) => {
-  const generatedId = React.useId();
-  const finalId = id || generatedId;
-  const { setDescriptionId } = React.useContext(PanelContext);
-  React.useEffect(() => {
-    setDescriptionId?.(finalId);
-  }, [finalId, setDescriptionId]);
-  return (
-    <p
-      ref={ref}
-      id={finalId}
-      className={cn("text-sm text-muted-foreground", className)}
-      {...props}
-    />
-  );
-});
+const PanelDescription = React.memo(
+  React.forwardRef<
+    HTMLParagraphElement,
+    React.HTMLAttributes<HTMLParagraphElement> & { id?: string }
+  >(({ className, id, ...props }, ref) => {
+    const generatedId = React.useId();
+    const finalId = id || generatedId;
+    const { setDescriptionId } = React.useContext(PanelContext);
+    React.useEffect(() => {
+      setDescriptionId?.(finalId);
+    }, [finalId, setDescriptionId]);
+    return (
+      <p
+        ref={ref}
+        id={finalId}
+        className={cn("text-sm text-muted-foreground", className)}
+        {...props}
+      />
+    );
+  })
+);
 PanelDescription.displayName = "PanelDescription";
 
 const PanelAction = React.forwardRef<
