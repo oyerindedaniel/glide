@@ -15,7 +15,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "../ui/accordion";
-import { useProcessedFilesStore } from "@/store/processed-files";
+import {
+  ProcessingStatus,
+  useProcessedFilesStore,
+} from "@/store/processed-files";
 import { PanelType, usePanelStore } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
 import Image from "next/image";
@@ -94,11 +97,21 @@ export function ProgressUpload() {
     }
   };
 
+  const isSortingDisabled = (
+    status: ProcessingStatus,
+    itemCount: number
+  ): boolean => {
+    return ProcessingStatus.COMPLETED !== status || itemCount <= 1;
+  };
+
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    }),
     useSensor(KeyboardSensor)
   );
-
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange} withOverlay>
       <PanelContent
@@ -132,7 +145,14 @@ export function ProgressUpload() {
                     const fileType = fileMetadata.get(fileName)?.type;
                     const status = fileStatus.get(fileName);
                     return (
-                      <SortableItem key={fileName} id={fileName}>
+                      <SortableItem
+                        key={fileName}
+                        id={fileName}
+                        disabled={isSortingDisabled(
+                          status!,
+                          processedFiles.size
+                        )}
+                      >
                         <div
                           className="w-full"
                           style={{
@@ -170,6 +190,10 @@ export function ProgressUpload() {
                                         <SortableItem
                                           key={`${fileName}-${page}`}
                                           id={`${fileName}-${page}`}
+                                          disabled={isSortingDisabled(
+                                            status!,
+                                            pages.size
+                                          )}
                                         >
                                           <div
                                             className="flex items-center gap-5 justify-between py-2 w-full"
@@ -183,7 +207,7 @@ export function ProgressUpload() {
                                                 src={
                                                   url || "/PDF-upload-icon.svg"
                                                 }
-                                                className="w-10 h-10 object-cover"
+                                                className="w-10 h-10 object-cover rounded-sm"
                                                 alt={`Page ${page}`}
                                                 width={40}
                                                 height={40}
@@ -205,7 +229,10 @@ export function ProgressUpload() {
                             <div className="flex items-center gap-5 justify-between py-2">
                               <div className="inline-flex items-center gap-5">
                                 <Image
-                                  src={Array.from(pages.values())[0]?.url || ""}
+                                  src={
+                                    Array.from(pages.values())[0]?.url ||
+                                    "/JPG-upload-icon.svg"
+                                  }
                                   alt={fileName}
                                   className="w-10 h-10 object-cover rounded-sm"
                                   width={30}

@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface SortableContextType<T> {
   items: T[];
@@ -76,12 +77,23 @@ export function SortableRoot<T extends { id: string }>({
 
 interface SortableItemProps {
   id: string;
+  disabled?: boolean;
   children: React.ReactNode;
 }
 
-export function SortableItem({ id, children }: SortableItemProps) {
-  const { attributes, listeners, setNodeRef, transform, transition } =
-    useSortable({ id });
+export function SortableItem({
+  id,
+  disabled = false,
+  children,
+}: SortableItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -90,8 +102,16 @@ export function SortableItem({ id, children }: SortableItemProps) {
 
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <div className="flex items-center">
-        <GripVertical className="cursor-grab w-4 h-4" />
+      <div
+        className={cn(
+          "flex items-center gap-2",
+          disabled ? "gap-0 block" : "",
+          isDragging
+            ? "border-2 border-dashed border-primary rounded-lg px-2 bg-primary/20"
+            : ""
+        )}
+      >
+        {!disabled && <GripVertical className="cursor-grab w-4 h-4" />}
         {children}
       </div>
     </div>

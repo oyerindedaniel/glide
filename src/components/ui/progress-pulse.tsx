@@ -67,6 +67,7 @@ const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
   const { status } = useContext(ProgressPulseContext);
   const [width, setWidth] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastWidthRef = useRef<number>(0);
 
   useLayoutEffect(() => {
     const container = containerRef?.current;
@@ -81,6 +82,9 @@ const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
         newWidth = container.offsetWidth;
         widthCache.set(status, newWidth);
       }
+
+      if (lastWidthRef.current === newWidth) return;
+      lastWidthRef.current = newWidth;
 
       container.style.width = "0px";
       container.style.transition = "width 0.5s ease";
