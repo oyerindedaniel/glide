@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export enum ProcessingStatus {
+enum ProcessingStatus {
   NOT_STARTED = "not_started",
   PROCESSING = "processing",
   COMPLETED = "completed",
@@ -10,7 +10,7 @@ export enum ProcessingStatus {
 /**
  * Represents the processing state for each page in a file.
  */
-interface PageStatus {
+export interface PageStatus {
   url: string;
   status: ProcessingStatus;
 }
@@ -48,191 +48,224 @@ interface ProcessedFileState {
   computeStatusCounts: () => void;
   checkAllFilesProcessed: () => void;
   reset: () => void;
+
+  // For sorting
+  reorderFiles: (newOrder: string[]) => void;
+  reorderPages: (fileName: string, newPageOrder: number[]) => void;
 }
 
-/**
- * Represents the processing state for each page in a file.
- */
-interface PageStatus {
-  url: string;
-  status: ProcessingStatus;
-}
+const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
+  processedFiles: new Map(),
+  fileStatus: new Map(),
+  fileMetadata: new Map(),
+  totalFiles: 0,
+  allFilesProcessed: false,
+  statusCounts: {
+    [ProcessingStatus.NOT_STARTED]: 0,
+    [ProcessingStatus.PROCESSING]: 0,
+    [ProcessingStatus.COMPLETED]: 0,
+    [ProcessingStatus.FAILED]: 0,
+  },
 
-export const useProcessedFilesStore = create<ProcessedFileState>(
-  (set, get) => ({
-    processedFiles: new Map(),
-    fileStatus: new Map(),
-    fileMetadata: new Map(),
-    totalFiles: 0,
-    allFilesProcessed: false,
-    statusCounts: {
+  /**
+   * Adds a new file with a NOT_STARTED status and prepares its pages.
+   */
+  addFile: (fileName, totalPages, metadata) => {
+    set((state) => {
+      const newProcessedFiles = new Map(state.processedFiles);
+      const newFileStatus = new Map(state.fileStatus);
+      const newFileMetadata = new Map(state.fileMetadata);
+
+      if (!newProcessedFiles.has(fileName)) {
+        const pages = new Map<number, PageStatus>();
+        for (let i = 1; i <= totalPages; i++) {
+          pages.set(i, {
+            url: "",
+            status: ProcessingStatus.NOT_STARTED,
+          });
+        }
+        newProcessedFiles.set(fileName, pages);
+        newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
+        newFileMetadata.set(fileName, metadata);
+      }
+
+      return {
+        processedFiles: newProcessedFiles,
+        fileStatus: newFileStatus,
+        fileMetadata: newFileMetadata,
+      };
+    });
+
+    get().computeStatusCounts();
+  },
+  /**
+   * Adds or updates a page URL and its status (default is COMPLETED).
+   */
+  addPageToFile: (
+    fileName,
+    pageNumber,
+    url,
+    status = ProcessingStatus.COMPLETED
+  ) => {
+    set((state) => {
+      const newProcessedFiles = new Map(state.processedFiles);
+      const filePages =
+        newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
+      const newFilePages = new Map<number, PageStatus>(filePages);
+
+      newFilePages.set(pageNumber, { url, status });
+      newProcessedFiles.set(fileName, newFilePages);
+
+      return { processedFiles: newProcessedFiles };
+    });
+
+    get().checkAllFilesProcessed();
+  },
+
+  /**
+   * Updates the status of a specific page within a file.
+   */
+  setPageStatus: (fileName, pageNumber, status) => {
+    set((state) => {
+      const newProcessedFiles = new Map(state.processedFiles);
+      const filePages = newProcessedFiles.get(fileName);
+      if (filePages && filePages.has(pageNumber)) {
+        const page = filePages.get(pageNumber)!;
+        filePages.set(pageNumber, { ...page, status });
+        newProcessedFiles.set(fileName, filePages);
+      }
+      return { processedFiles: newProcessedFiles };
+    });
+
+    get().checkAllFilesProcessed();
+  },
+
+  /**
+   * Updates the overall file processing status.
+   */
+  setFileStatus: (fileName, status) => {
+    set((state) => {
+      const newFileStatus = new Map(state.fileStatus);
+      newFileStatus.set(fileName, status);
+      return { fileStatus: newFileStatus };
+    });
+
+    get().computeStatusCounts();
+    if (
+      status === ProcessingStatus.COMPLETED ||
+      status === ProcessingStatus.FAILED
+    ) {
+      get().checkAllFilesProcessed();
+    }
+  },
+
+  /**
+   * Sets or updates the total number of files to process.
+   * If totalFiles already exists, it adds to it.
+   */
+  setTotalFiles: (total: number) =>
+    set((state) => ({ totalFiles: (state.totalFiles || 0) + total })),
+
+  /**
+   * Computes and updates the counts for each processing status.
+   */
+  computeStatusCounts: () => {
+    const { fileStatus } = get();
+    const statusCounts = {
       [ProcessingStatus.NOT_STARTED]: 0,
       [ProcessingStatus.PROCESSING]: 0,
       [ProcessingStatus.COMPLETED]: 0,
       [ProcessingStatus.FAILED]: 0,
-    },
+    };
 
-    /**
-     * Adds a new file with a NOT_STARTED status and prepares its pages.
-     */
-    addFile: (fileName, totalPages, metadata) => {
-      set((state) => {
-        const newProcessedFiles = new Map(state.processedFiles);
-        const newFileStatus = new Map(state.fileStatus);
-        const newFileMetadata = new Map(state.fileMetadata);
+    fileStatus.forEach((status) => {
+      statusCounts[status]++;
+    });
 
-        if (!newProcessedFiles.has(fileName)) {
-          const pages = new Map<number, PageStatus>();
-          for (let i = 1; i <= totalPages; i++) {
-            pages.set(i, {
-              url: "",
-              status: ProcessingStatus.NOT_STARTED,
-            });
-          }
-          newProcessedFiles.set(fileName, pages);
-          newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
-          newFileMetadata.set(fileName, metadata);
-        }
+    set({ statusCounts });
+  },
 
-        return {
-          processedFiles: newProcessedFiles,
-          fileStatus: newFileStatus,
-          fileMetadata: newFileMetadata,
-        };
+  /**
+   * Checks whether all files (and their pages) have completed processing.
+   */
+  checkAllFilesProcessed: () => {
+    const { processedFiles, totalFiles } = get();
+
+    let completedFiles = 0;
+
+    processedFiles.forEach((pages) => {
+      const allPagesCompleted = Array.from(pages.values()).every(
+        (page) =>
+          page.status === ProcessingStatus.COMPLETED ||
+          page.status === ProcessingStatus.FAILED
+      );
+
+      if (allPagesCompleted) completedFiles++;
+    });
+
+    set({ allFilesProcessed: completedFiles === totalFiles });
+  },
+
+  /**
+   * Resets the store and revokes all object URLs to prevent memory leaks.
+   */
+  reset: () => {
+    set((state) => {
+      state.processedFiles.forEach((pages) => {
+        pages.forEach((page) => URL.revokeObjectURL(page.url));
       });
 
-      get().computeStatusCounts();
-    },
-    /**
-     * Adds or updates a page URL and its status (default is COMPLETED).
-     */
-    addPageToFile: (
-      fileName,
-      pageNumber,
-      url,
-      status = ProcessingStatus.COMPLETED
-    ) => {
-      set((state) => {
-        const newProcessedFiles = new Map(state.processedFiles);
-        const filePages =
-          newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
-        const newFilePages = new Map<number, PageStatus>(filePages);
-
-        newFilePages.set(pageNumber, { url, status });
-        newProcessedFiles.set(fileName, newFilePages);
-
-        return { processedFiles: newProcessedFiles };
-      });
-
-      get().checkAllFilesProcessed();
-    },
-
-    /**
-     * Updates the status of a specific page within a file.
-     */
-    setPageStatus: (fileName, pageNumber, status) => {
-      set((state) => {
-        const newProcessedFiles = new Map(state.processedFiles);
-        const filePages = newProcessedFiles.get(fileName);
-        if (filePages && filePages.has(pageNumber)) {
-          const page = filePages.get(pageNumber)!;
-          filePages.set(pageNumber, { ...page, status });
-          newProcessedFiles.set(fileName, filePages);
-        }
-        return { processedFiles: newProcessedFiles };
-      });
-
-      get().checkAllFilesProcessed();
-    },
-
-    /**
-     * Updates the overall file processing status.
-     */
-    setFileStatus: (fileName, status) => {
-      set((state) => {
-        const newFileStatus = new Map(state.fileStatus);
-        newFileStatus.set(fileName, status);
-        return { fileStatus: newFileStatus };
-      });
-
-      get().computeStatusCounts();
-      if (
-        status === ProcessingStatus.COMPLETED ||
-        status === ProcessingStatus.FAILED
-      ) {
-        get().checkAllFilesProcessed();
-      }
-    },
-
-    /**
-     * Sets or updates the total number of files to process.
-     * If totalFiles already exists, it adds to it.
-     */
-    setTotalFiles: (total: number) =>
-      set((state) => ({ totalFiles: (state.totalFiles || 0) + total })),
-
-    /**
-     * Computes and updates the counts for each processing status.
-     */
-    computeStatusCounts: () => {
-      const { fileStatus } = get();
-      const statusCounts = {
-        [ProcessingStatus.NOT_STARTED]: 0,
-        [ProcessingStatus.PROCESSING]: 0,
-        [ProcessingStatus.COMPLETED]: 0,
-        [ProcessingStatus.FAILED]: 0,
+      return {
+        processedFiles: new Map(),
+        fileStatus: new Map(),
+        totalFiles: 0,
+        allFilesProcessed: false,
+        statusCounts: {
+          [ProcessingStatus.NOT_STARTED]: 0,
+          [ProcessingStatus.PROCESSING]: 0,
+          [ProcessingStatus.COMPLETED]: 0,
+          [ProcessingStatus.FAILED]: 0,
+        },
       };
+    });
+  },
 
-      fileStatus.forEach((status) => {
-        statusCounts[status]++;
+  reorderFiles: (newOrder: string[]) => {
+    set((state) => {
+      const newProcessedFiles = new Map();
+      const newFileStatus = new Map();
+      const newFileMetadata = new Map();
+
+      newOrder.forEach((fileName) => {
+        newProcessedFiles.set(fileName, state.processedFiles.get(fileName));
+        newFileStatus.set(fileName, state.fileStatus.get(fileName));
+        newFileMetadata.set(fileName, state.fileMetadata.get(fileName));
       });
 
-      set({ statusCounts });
-    },
+      return {
+        processedFiles: newProcessedFiles,
+        fileStatus: newFileStatus,
+        fileMetadata: newFileMetadata,
+      };
+    });
+  },
 
-    /**
-     * Checks whether all files (and their pages) have completed processing.
-     */
-    checkAllFilesProcessed: () => {
-      const { processedFiles, totalFiles } = get();
+  reorderPages: (fileName: string, newPageOrder: number[]) => {
+    set((state) => {
+      const pages = state.processedFiles.get(fileName);
+      if (!pages) return state;
 
-      let completedFiles = 0;
-
-      processedFiles.forEach((pages) => {
-        const allPagesCompleted = Array.from(pages.values()).every(
-          (page) =>
-            page.status === ProcessingStatus.COMPLETED ||
-            page.status === ProcessingStatus.FAILED
-        );
-
-        if (allPagesCompleted) completedFiles++;
+      const newPages = new Map();
+      newPageOrder.forEach((pageNumber) => {
+        newPages.set(pageNumber, pages.get(pageNumber));
       });
 
-      set({ allFilesProcessed: completedFiles === totalFiles });
-    },
+      const newProcessedFiles = new Map(state.processedFiles);
+      newProcessedFiles.set(fileName, newPages);
 
-    /**
-     * Resets the store and revokes all object URLs to prevent memory leaks.
-     */
-    reset: () => {
-      set((state) => {
-        state.processedFiles.forEach((pages) => {
-          pages.forEach((page) => URL.revokeObjectURL(page.url));
-        });
+      return { processedFiles: newProcessedFiles };
+    });
+  },
+}));
 
-        return {
-          processedFiles: new Map(),
-          fileStatus: new Map(),
-          totalFiles: 0,
-          allFilesProcessed: false,
-          statusCounts: {
-            [ProcessingStatus.NOT_STARTED]: 0,
-            [ProcessingStatus.PROCESSING]: 0,
-            [ProcessingStatus.COMPLETED]: 0,
-            [ProcessingStatus.FAILED]: 0,
-          },
-        };
-      });
-    },
-  })
-);
+export { useProcessedFilesStore, ProcessingStatus };
