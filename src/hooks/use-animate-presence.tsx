@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useStableHandler } from "./use-stable-handler";
 
 /**
  * Hook to manage presence state with animation control.
@@ -17,24 +18,21 @@ export function useAnimatePresence(
 ): boolean {
   const [internalPresence, setInternalPresence] =
     useState<boolean>(externalPresence);
-  const onAnimateRef = useRef(onAnimate);
   const isInitialRender = useRef(true);
 
   const { animateOnInitialLoad = true } = options;
 
-  useEffect(() => {
-    onAnimateRef.current = onAnimate;
-  });
+  const onAnimateRef = useStableHandler(onAnimate);
 
   const handleAnimation = useCallback(
     async (presence: boolean): Promise<void> => {
       try {
-        await onAnimateRef.current(presence);
+        await onAnimateRef(presence);
       } catch (error) {
         throw error;
       }
     },
-    []
+    [onAnimateRef]
   );
 
   useEffect(() => {
