@@ -145,7 +145,7 @@ export function ProgressUploadButton(props: ProgressUploadButtonProps) {
           data-state={state}
           ref={elementRef}
           className={cn(
-            "group absolute bottom-12 left-12 font-[family-name:var(--font-manrope)] cursor-pointer hover:scale-105 transition-transform duration-500",
+            "group absolute bottom-12 left-12 cursor-pointer hover:scale-105 transition-transform duration-500",
             isProcessedFiles && !hasPanelBeenOpened
               ? "data-dropped:animate-bounce"
               : ""

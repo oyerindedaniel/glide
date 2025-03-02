@@ -849,7 +849,7 @@ const UploadArea = React.memo(
       onKeyDown={(e) => e.key === "Enter" && onClick()}
     >
       <FileUploadIcons />
-      <div className="space-y-2 font-[family-name:var(--font-manrope)] text-center text-sm mt-5">
+      <div className="space-y-2 text-center text-sm mt-5">
         <p className="font-medium">Drag & drop files here</p>
         <p className="text-sm text-muted-foreground">
           Supported formats: PNG, JPG, PDF

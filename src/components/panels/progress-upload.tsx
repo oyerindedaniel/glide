@@ -34,6 +34,10 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
+import {
+  restrictToVerticalAxis,
+  restrictToParentElement,
+} from "@dnd-kit/modifiers";
 
 export function ProgressUpload() {
   const {
@@ -99,7 +103,7 @@ export function ProgressUpload() {
   };
 
   const handleDragStart = () => {
-    setOpenAccordions([]);
+    setOpenAccordions([]); // Close all accordions during drag
   };
 
   const isSortingDisabled = (
@@ -117,10 +121,11 @@ export function ProgressUpload() {
     }),
     useSensor(KeyboardSensor)
   );
+
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange} withOverlay>
       <PanelContent
-        className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 bg-black text-white max-w-150 w-full font-[family-name:var(--font-manrope)]"
+        className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 bg-black text-white max-w-150 w-full"
         id="panel"
       >
         <PanelHeader>
@@ -134,7 +139,7 @@ export function ProgressUpload() {
           </PanelDescription>
         </PanelHeader>
         <PanelBody className="text-sm">
-          <h2 className="mb-2">Total File(s): {totalFiles}</h2>
+          <h2 className="mt-2">Total File(s): {totalFiles}</h2>
           <ScrollArea className="h-fit w-full pr-3">
             <div className="max-h-75">
               {/* SortableRoot for files */}
@@ -145,6 +150,7 @@ export function ProgressUpload() {
                 }))}
                 onDragStart={handleDragStart}
                 onDragEnd={handleFileDragEnd}
+                modifiers={[restrictToVerticalAxis, restrictToParentElement]}
               >
                 {Array.from(processedFiles.entries()).map(
                   ([fileName, pages]) => {
@@ -195,6 +201,10 @@ export function ProgressUpload() {
                                       })
                                     )}
                                     onDragEnd={handlePageDragEnd(fileName)}
+                                    modifiers={[
+                                      restrictToVerticalAxis,
+                                      restrictToParentElement,
+                                    ]}
                                   >
                                     {Array.from(pages.entries()).map(
                                       ([page, { status, url }]) => (

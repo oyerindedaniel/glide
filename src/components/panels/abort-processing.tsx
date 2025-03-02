@@ -42,7 +42,7 @@ export const PanelAbortProcessing: React.FC<Props> = ({
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange}>
       <PanelContent
-        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-black text-white max-w-80 w-full font-[family-name:var(--font-manrope)]"
+        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-black text-white max-w-80 w-full"
         id="panel"
       >
         <PanelHeader>

@@ -44,110 +44,110 @@ const PanelContext = React.createContext<{
   animatedElementRef: { current: null },
 });
 
-const PanelRoot = React.forwardRef<
-  HTMLDivElement,
-  {
-    open?: boolean;
-    onOpenChange?: (open: boolean) => void;
-    defaultOpen?: boolean;
-    triggerRef?: React.RefObject<HTMLElement>;
-    children: React.ReactNode;
-    withOverlay?: boolean;
-  }
->(
-  (
+const PanelRoot = React.memo(
+  React.forwardRef<
+    HTMLDivElement,
     {
-      open: controlledOpen,
-      onOpenChange,
-      defaultOpen = false,
-      children,
-      withOverlay = false,
-    },
-    forwardedRef
-  ) => {
-    const isControlled = controlledOpen !== undefined;
-    const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
-    const isOpen = isControlled ? controlledOpen : internalOpen;
-
-    const panelRef = React.useRef<HTMLDivElement>(null);
-    const animatedElementRef = React.useRef<HTMLElement | null>(null);
-
-    const [panelId, setPanelId] = React.useState<string>(React.useId());
-    const [titleId, setTitleId] = React.useState<string | undefined>();
-    const [descriptionId, setDescriptionId] = React.useState<
-      string | undefined
-    >();
-
-    const triggerRef = React.useRef<HTMLButtonElement>(null);
-
-    const stableOnOpenChange = useStableHandler(onOpenChange);
-
-    const state = isOpen ? "open" : "closed";
-
-    const handleOpenChange = React.useCallback(
-      (newOpen: boolean) => {
-        if (isControlled) {
-          stableOnOpenChange?.(newOpen);
-        } else {
-          setInternalOpen(newOpen);
-        }
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+      defaultOpen?: boolean;
+      triggerRef?: React.RefObject<HTMLElement>;
+      children: React.ReactNode;
+      withOverlay?: boolean;
+    }
+  >(
+    (
+      {
+        open: controlledOpen,
+        onOpenChange,
+        defaultOpen = false,
+        children,
+        withOverlay = false,
       },
-      [isControlled, stableOnOpenChange]
-    );
+      forwardedRef
+    ) => {
+      const isControlled = controlledOpen !== undefined;
+      const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
+      const isOpen = isControlled ? controlledOpen : internalOpen;
 
-    const isPresent = useAnimatePresence(
-      isOpen,
-      async () => {
-        const animatedElement = animatedElementRef.current;
-        return new Promise((resolve) => {
-          const handleAnimationEnd = async (e: AnimationEvent) => {
-            e.stopPropagation();
-            if (e.target === animatedElement) {
-              resolve();
-              animatedElement?.removeEventListener(
+      const panelRef = React.useRef<HTMLDivElement>(null);
+      const animatedElementRef = React.useRef<HTMLElement | null>(null);
+
+      const [panelId, setPanelId] = React.useState<string>(React.useId());
+      const [titleId, setTitleId] = React.useState<string | undefined>();
+      const [descriptionId, setDescriptionId] = React.useState<
+        string | undefined
+      >();
+
+      const triggerRef = React.useRef<HTMLButtonElement>(null);
+
+      const stableOnOpenChange = useStableHandler(onOpenChange);
+
+      const state = isOpen ? "open" : "closed";
+
+      const handleOpenChange = React.useCallback(
+        (newOpen: boolean) => {
+          if (isControlled) {
+            stableOnOpenChange?.(newOpen);
+          } else {
+            setInternalOpen(newOpen);
+          }
+        },
+        [isControlled, stableOnOpenChange]
+      );
+
+      const isPresent = useAnimatePresence(
+        isOpen,
+        async () => {
+          const animatedElement = animatedElementRef.current;
+          return new Promise((resolve) => {
+            const handleAnimationEnd = async (e: AnimationEvent) => {
+              e.stopPropagation();
+              if (e.target === animatedElement) {
+                resolve();
+                animatedElement?.removeEventListener(
+                  "animationend",
+                  handleAnimationEnd
+                );
+              }
+            };
+
+            if (animatedElement) {
+              animatedElement.addEventListener(
                 "animationend",
                 handleAnimationEnd
               );
             }
-          };
+          });
+        },
+        { animateOnInitialLoad: false }
+      );
 
-          if (animatedElement) {
-            animatedElement.addEventListener(
-              "animationend",
-              handleAnimationEnd
-            );
-          }
-        });
-      },
-      { animateOnInitialLoad: false }
-    );
-
-    // console.log({})
-
-    return (
-      <PanelContext.Provider
-        value={{
-          setTitleId,
-          setDescriptionId,
-          setPanelId,
-          panelId,
-          open: isOpen,
-          present: isPresent,
-          state,
-          onOpenChange: handleOpenChange,
-          titleId,
-          descriptionId,
-          animatedElementRef,
-          triggerRef,
-          withOverlay,
-        }}
-      >
-        <div aria-hidden ref={mergeRefs(panelRef, forwardedRef)}>
-          {children}
-        </div>
-      </PanelContext.Provider>
-    );
-  }
+      return (
+        <PanelContext.Provider
+          value={{
+            setTitleId,
+            setDescriptionId,
+            setPanelId,
+            panelId,
+            open: isOpen,
+            present: isPresent,
+            state,
+            onOpenChange: handleOpenChange,
+            titleId,
+            descriptionId,
+            animatedElementRef,
+            triggerRef,
+            withOverlay,
+          }}
+        >
+          <div aria-hidden ref={mergeRefs(panelRef, forwardedRef)}>
+            {children}
+          </div>
+        </PanelContext.Provider>
+      );
+    }
+  )
 );
 PanelRoot.displayName = "PanelRoot";
 
@@ -312,7 +312,7 @@ const PanelContent = React.forwardRef<
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         className={cn(
-          "fixed bg-white p-5 shadow-lg sm:rounded-xl z-1000",
+          "fixed bg-white p-6 shadow-lg sm:rounded-xl z-1000",
           "data-[state=open]:animate-panel-in",
           "data-[state=closed]:animate-panel-out",
           "",
@@ -340,7 +340,7 @@ const PanelHeader = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/header p-2", className)}
+          className={cn("group/header", className)}
           {...props}
         />
       );
@@ -357,7 +357,7 @@ const PanelBody = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/body p-2", className)}
+          className={cn("group/body", className)}
           {...props}
         />
       );
@@ -374,7 +374,7 @@ const PanelFooter = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/footer p-2", className)}
+          className={cn("group/footer", className)}
           {...props}
         />
       );

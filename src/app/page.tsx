@@ -8,6 +8,7 @@ import { SwitchButton } from "@/components/switch-button";
 import { Mode } from "@/types/app";
 import ProgressUploadButton from "@/components/progress-upload-button";
 import { Panels } from "@/components/panels";
+import Header from "@/components/header";
 
 export default function Home() {
   const [mode, setMode] = useState<Mode>(Mode.UPLOAD);
@@ -54,6 +55,7 @@ export default function Home() {
 
   return (
     <Background>
+      <Header />
       {mode === Mode.UPLOAD ? (
         <FileDropZone ref={fileDropZoneRef} />
       ) : (

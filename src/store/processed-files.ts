@@ -52,6 +52,9 @@ interface ProcessedFileState {
   // For sorting
   reorderFiles: (newOrder: string[]) => void;
   reorderPages: (fileName: string, newPageOrder: number[]) => void;
+
+  removeFile: (fileName: string) => void;
+  removePage: (fileName: string, pageNumber: number) => void;
 }
 
 const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
@@ -167,7 +170,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     set((state) => ({ totalFiles: (state.totalFiles || 0) + total })),
 
   /**
-   * Computes and updates the counts for each processing status.
+   * Computes and updates the counts for each file processing status.
    */
   computeStatusCounts: () => {
     const { fileStatus } = get();
@@ -265,6 +268,55 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
 
       return { processedFiles: newProcessedFiles };
     });
+  },
+
+  removeFile: (fileName: string) => {
+    set((state) => {
+      const newProcessedFiles = new Map(state.processedFiles);
+      const newFileStatus = new Map(state.fileStatus);
+      const newFileMetadata = new Map(state.fileMetadata);
+
+      // Revoke blob URLs for all pages of the file before deletion
+      const pages = newProcessedFiles.get(fileName);
+      if (pages) {
+        pages.forEach((page) => {
+          if (page.url && page.url.startsWith("blob:")) {
+            URL.revokeObjectURL(page.url);
+          }
+        });
+      }
+
+      newProcessedFiles.delete(fileName);
+      newFileStatus.delete(fileName);
+      newFileMetadata.delete(fileName);
+
+      return {
+        processedFiles: newProcessedFiles,
+        fileStatus: newFileStatus,
+        fileMetadata: newFileMetadata,
+        totalFiles: Math.max(0, state.totalFiles - 1),
+      };
+    });
+    get().computeStatusCounts();
+    get().checkAllFilesProcessed();
+  },
+
+  removePage: (fileName: string, pageNumber: number) => {
+    set((state) => {
+      const newProcessedFiles = new Map(state.processedFiles);
+      const pages = newProcessedFiles.get(fileName);
+      if (pages) {
+        // Revoke blob URL for the specific page before deletion
+        const page = pages.get(pageNumber);
+        if (page && page.url && page.url.startsWith("blob:")) {
+          URL.revokeObjectURL(page.url);
+        }
+        pages.delete(pageNumber);
+        newProcessedFiles.set(fileName, pages);
+      }
+      return { processedFiles: newProcessedFiles };
+    });
+    get().checkAllFilesProcessed();
   },
 }));
 

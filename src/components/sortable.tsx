@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useMemo } from "react";
+import * as React from "react";
 import {
   DndContext,
   CollisionDetection,
@@ -11,6 +11,8 @@ import {
   DragCancelEvent,
   DragOverEvent,
   closestCenter,
+  DragOverlay,
+  useDndContext,
 } from "@dnd-kit/core";
 import {
   SortableContext,
@@ -21,27 +23,34 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modifier } from "@dnd-kit/core";
+import { Button } from "./ui/button";
+import { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 
-interface SortableContextType<T> {
+interface SortableContextValue<T> {
   items: T[];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const SortableContextCtx = createContext<SortableContextType<any> | null>(null);
+const SortableContextCtx = React.createContext<SortableContextValue<any>>({
+  items: [],
+});
+SortableContextCtx.displayName = "SortableContextCtx";
 
 interface SortableRootProps<T> {
-  items: T[]; // The list of items to sort
-  sensors?: SensorDescriptor<SensorOptions>[]; // Array of sensors (e.g., PointerSensor, TouchSensor)
-  collisionDetection?: CollisionDetection; // Custom collision detection strategy
-  strategy?: SortingStrategy; // Custom sorting strategy (e.g., vertical, horizontal)
-  onDragStart?: (event: DragStartEvent) => void; // Called when drag starts
-  onDragOver?: (event: DragOverEvent) => void; // Called when dragging over an item
-  onDragEnd?: (event: DragEndEvent) => void; // Called when drag ends
-  onDragCancel?: (event: DragCancelEvent) => void; // Called when drag is canceled
+  items: T[];
+  sensors?: SensorDescriptor<SensorOptions>[];
+  collisionDetection?: CollisionDetection;
+  strategy?: SortingStrategy;
+  onDragStart?: (event: DragStartEvent) => void;
+  onDragOver?: (event: DragOverEvent) => void;
+  onDragEnd?: (event: DragEndEvent) => void;
+  onDragCancel?: (event: DragCancelEvent) => void;
+  modifiers?: Modifier[];
   children: React.ReactNode;
 }
 
-export function SortableRoot<T extends { id: string }>({
+function SortableRoot<T extends { id: string }>({
   items,
   sensors = [],
   collisionDetection = closestCenter,
@@ -50,9 +59,10 @@ export function SortableRoot<T extends { id: string }>({
   onDragOver,
   onDragEnd,
   onDragCancel,
+  modifiers = [],
   children,
 }: SortableRootProps<T>) {
-  const contextValue = useMemo(() => ({ items }), [items]);
+  const contextValue = React.useMemo(() => ({ items }), [items]);
 
   return (
     <SortableContextCtx.Provider value={contextValue}>
@@ -63,6 +73,7 @@ export function SortableRoot<T extends { id: string }>({
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDragCancel={onDragCancel}
+        modifiers={modifiers}
       >
         <SortableContext
           items={items.map((item) => item.id)}
@@ -74,22 +85,26 @@ export function SortableRoot<T extends { id: string }>({
     </SortableContextCtx.Provider>
   );
 }
+SortableRoot.displayName = "SortableRoot";
 
 interface SortableItemProps {
   id: string;
   disabled?: boolean;
+  asHandle?: boolean;
   children: React.ReactNode;
 }
 
-export function SortableItem({
+function SortableItem({
   id,
   disabled = false,
+  asHandle = true,
   children,
 }: SortableItemProps) {
   const {
     attributes,
     listeners,
     setNodeRef,
+    setActivatorNodeRef,
     transform,
     transition,
     isDragging,
@@ -101,19 +116,73 @@ export function SortableItem({
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...(!asHandle && !disabled ? listeners : {})}
+    >
       <div
         className={cn(
           "flex items-center gap-2",
           disabled ? "gap-0 block" : "",
-          isDragging
-            ? "border-2 border-dashed border-primary rounded-lg px-2 bg-primary/20"
-            : ""
+          {
+            "border-2 border-dashed border-primary rounded-lg px-2 bg-primary/20 z-500":
+              isDragging,
+          }
         )}
       >
-        {!disabled && <GripVertical className="cursor-grab w-4 h-4" />}
+        {!disabled && asHandle && (
+          <SortableHandle ref={setActivatorNodeRef} listeners={listeners} />
+        )}
         {children}
       </div>
     </div>
   );
 }
+SortableItem.displayName = "SortableItem";
+
+const SortableHandle = React.forwardRef(function SortableHandle(
+  { listeners }: { listeners?: SyntheticListenerMap },
+  ref: React.Ref<HTMLButtonElement>
+) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="cursor-grab p-0 h-6 w-6"
+      ref={ref}
+      {...(listeners ?? {})}
+    >
+      <GripVertical className="h-4 w-4" />
+    </Button>
+  );
+});
+SortableHandle.displayName = "SortableHandle";
+
+interface SortableOverlayProps<T> {
+  children: (activeItem: T | null) => React.ReactNode;
+}
+
+const SortableOverlay = function SortableOverlay<T>({
+  children,
+}: SortableOverlayProps<T>) {
+  const { items } = React.useContext(SortableContextCtx);
+  const { active } = useDndContext();
+  const activeItem = active
+    ? items.find((item) => item.id === active.id)
+    : null;
+
+  if (!activeItem) return null;
+
+  return <DragOverlay>{children(activeItem)}</DragOverlay>;
+};
+SortableOverlay.displayName = "SortableOverlay";
+
+export {
+  SortableRoot,
+  SortableItem,
+  SortableHandle,
+  SortableOverlay,
+  SortableContextCtx,
+};
