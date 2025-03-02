@@ -9,15 +9,15 @@ import { useIsomorphicLayoutEffect } from "./use-Isomorphic-layout-effect";
  * @returns A stable callback that always uses the latest version of the handler.
  */
 export function useStableHandler<T extends (...args: any[]) => any>(
-  handler: T | undefined
-): (...args: Parameters<T>) => ReturnType<T> | undefined {
-  const handlerRef = useRef<T | undefined>(handler);
+  handler: T
+): (...args: Parameters<T>) => ReturnType<T> {
+  const handlerRef = useRef<T>(handler);
 
   useIsomorphicLayoutEffect(() => {
     handlerRef.current = handler;
   });
 
-  return useCallback((...args: Parameters<T>): ReturnType<T> | undefined => {
+  return useCallback((...args: Parameters<T>): ReturnType<T> => {
     return handlerRef.current?.(...args);
   }, []);
 }
