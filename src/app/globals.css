@@ -5,6 +5,8 @@
   --animate-grow: grow 2s ease-out forwards;
   --animate-accordion-down: accordion-down 0.35s ease-out;
   --animate-accordion-up: accordion-up 0.35s ease-out;
+  --animate-fade-in: fade-in 0.4s ease-in forwards;
+  --animate-fade-out: fade-out 0.4s ease-out forwards;
   --animate-panel-in: panel-in 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
   --animate-panel-out: panel-out 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 
@@ -45,6 +47,24 @@
     }
     100% {
       opacity: 1;
+    }
+  }
+
+  @keyframes fade-in {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fade-out {
+    0% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
     }
   }
 

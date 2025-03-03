@@ -161,7 +161,7 @@ const PanelOverlay = React.memo(
           data-state={state}
           ref={ref}
           className={cn(
-            "fixed inset-0 bg-black/50 z-50 data-[state=open]:fade-in data-[state=closed]:fade-out",
+            "fixed inset-0 bg-black/50 z-50 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out",
             className
           )}
           onClick={(event) => {

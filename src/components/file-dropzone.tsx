@@ -67,8 +67,6 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     const processingRef = useRef(false);
     const [isDragging, setIsDragging] = useState(false);
 
-    const pdfProcessor = useRef<PDFProcessor | null>(null);
-
     const abortControllerRef = useRef<AbortController | null>(null);
     const pendingFiles = useRef<FileList | null>(null);
 
@@ -91,19 +89,11 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
 
     const { closePanel, openPanel } = usePanelStore();
 
-    useEffect(() => {
-      const newPdfProcessor = new PDFProcessor({
-        maxConcurrent: 2,
-        pageBufferSize: 5,
-      });
-      pdfProcessor.current = newPdfProcessor;
-      return () => newPdfProcessor.cleanup();
-    }, []);
-
     /** Cleanup when component unmounts */
     useEffect(() => {
       return () => {
-        reset();
+        // TOD0: Consider resetting the store a better way
+        // reset();
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }

@@ -215,7 +215,11 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   reset: () => {
     set((state) => {
       state.processedFiles.forEach((pages) => {
-        pages.forEach((page) => URL.revokeObjectURL(page.url));
+        pages.forEach((page) => {
+          if (page.url && page.url.startsWith("blob:")) {
+            URL.revokeObjectURL(page.url);
+          }
+        });
       });
 
       return {
