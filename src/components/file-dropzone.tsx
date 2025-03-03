@@ -84,7 +84,6 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       isDragging: newDraggingState,
       animateToSnapPosition,
       setDropPosition,
-      cleanup,
     } = useDropAnimationStore();
 
     const { closePanel, openPanel } = usePanelStore();
@@ -97,9 +96,8 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         if (abortControllerRef.current) {
           abortControllerRef.current.abort();
         }
-        cleanup();
       };
-    }, [cleanup, reset]);
+    }, []);
 
     /** Setup up drop position when upload file is trigger via click */
     useEffect(() => {

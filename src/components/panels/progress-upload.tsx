@@ -25,7 +25,7 @@ import Image from "next/image";
 import { ProgressPulseContent, ProgressPulseRoot } from "../ui/progress-pulse";
 import { ScrollArea } from "../ui/scroll-area";
 import { FILE_INPUT_TYPES } from "@/constants/processing";
-import { SortableRoot, SortableItem } from "../sortable";
+import { SortableRoot, SortableItem, SortableContent } from "../sortable";
 import { arrayMove } from "@dnd-kit/sortable";
 import {
   DragEndEvent,
@@ -139,10 +139,11 @@ export function ProgressUpload() {
           </PanelDescription>
         </PanelHeader>
         <PanelBody className="text-sm">
-          <h2 className="mt-2">Total File(s): {totalFiles}</h2>
+          <h2 className="my-2">Total File(s): {totalFiles}</h2>
           <ScrollArea className="h-fit w-full pr-3">
             <div className="max-h-75">
               {/* SortableRoot for files */}
+
               <SortableRoot
                 sensors={sensors}
                 items={Array.from(processedFiles.keys()).map((fileName) => ({
@@ -152,127 +153,134 @@ export function ProgressUpload() {
                 onDragEnd={handleFileDragEnd}
                 modifiers={[restrictToVerticalAxis, restrictToParentElement]}
               >
-                {Array.from(processedFiles.entries()).map(
-                  ([fileName, pages]) => {
-                    const fileType = fileMetadata.get(fileName)?.type;
-                    const status = fileStatus.get(fileName);
-                    return (
-                      <SortableItem
-                        key={fileName}
-                        id={fileName}
-                        disabled={isSortingDisabled(
-                          status!,
-                          processedFiles.size
-                        )}
-                      >
-                        <div
-                          className="w-full"
-                          style={{
-                            contentVisibility: "auto",
-                            containIntrinsicSize: "54px",
-                          }}
-                        >
-                          {fileType === FILE_INPUT_TYPES.PDF ? (
-                            <Accordion
-                              type="multiple"
-                              className="w-full"
-                              value={openAccordions}
-                              onValueChange={setOpenAccordions}
-                            >
-                              <AccordionItem
-                                value={fileName}
-                                className="w-full"
-                              >
-                                <AccordionTrigger>
-                                  <div className="inline-flex items-center gap-8">
-                                    <span>{fileName}</span>
-                                    <ProgressPulseRoot status={status!}>
-                                      <ProgressPulseContent />
-                                    </ProgressPulseRoot>
-                                  </div>
-                                </AccordionTrigger>
-                                <AccordionContent>
-                                  {/* SortableRoot for pages */}
-                                  <SortableRoot
-                                    sensors={sensors}
-                                    items={Array.from(pages.keys()).map(
-                                      (pageNumber) => ({
-                                        id: `${fileName}-${pageNumber}`,
-                                      })
-                                    )}
-                                    onDragEnd={handlePageDragEnd(fileName)}
-                                    modifiers={[
-                                      restrictToVerticalAxis,
-                                      restrictToParentElement,
-                                    ]}
-                                  >
-                                    {Array.from(pages.entries()).map(
-                                      ([page, { status, url }]) => (
-                                        <SortableItem
-                                          key={`${fileName}-${page}`}
-                                          id={`${fileName}-${page}`}
-                                          disabled={isSortingDisabled(
-                                            status!,
-                                            pages.size
-                                          )}
-                                        >
-                                          <div
-                                            className="flex items-center gap-5 justify-between py-2 w-full"
-                                            style={{
-                                              contentVisibility: "auto",
-                                              containIntrinsicSize: "54px",
-                                            }}
-                                          >
-                                            <div className="inline-flex items-center gap-5">
-                                              <Image
-                                                src={
-                                                  url || "/PDF-upload-icon.svg"
-                                                }
-                                                className="w-10 h-10 object-cover rounded-sm"
-                                                alt={`Page ${page}`}
-                                                width={40}
-                                                height={40}
-                                              />
-                                              <span>{`Page ${page}`}</span>
-                                            </div>
-                                            <ProgressPulseRoot status={status}>
-                                              <ProgressPulseContent />
-                                            </ProgressPulseRoot>
-                                          </div>
-                                        </SortableItem>
-                                      )
-                                    )}
-                                  </SortableRoot>
-                                </AccordionContent>
-                              </AccordionItem>
-                            </Accordion>
-                          ) : (
-                            <div className="flex items-center gap-5 justify-between py-2">
-                              <div className="inline-flex items-center gap-5">
-                                <Image
-                                  src={
-                                    Array.from(pages.values())[0]?.url ||
-                                    "/JPG-upload-icon.svg"
-                                  }
-                                  alt={fileName}
-                                  className="w-10 h-10 object-cover rounded-sm"
-                                  width={30}
-                                  height={30}
-                                />
-                                <span>{fileName}</span>
-                              </div>
-                              <ProgressPulseRoot
-                                status={Array.from(pages.values())[0]?.status}
-                              >
-                                <ProgressPulseContent />
-                              </ProgressPulseRoot>
-                            </div>
+                <SortableContent>
+                  {Array.from(processedFiles.entries()).map(
+                    ([fileName, pages]) => {
+                      const fileType = fileMetadata.get(fileName)?.type;
+                      const status = fileStatus.get(fileName);
+                      return (
+                        <SortableItem
+                          key={fileName}
+                          id={fileName}
+                          disabled={isSortingDisabled(
+                            status!,
+                            processedFiles.size
                           )}
-                        </div>
-                      </SortableItem>
-                    );
-                  }
-                )}
+                        >
+                          <div
+                            className="w-full"
+                            style={{
+                              contentVisibility: "auto",
+                              containIntrinsicSize: "54px",
+                            }}
+                          >
+                            {fileType === FILE_INPUT_TYPES.PDF ? (
+                              <Accordion
+                                type="multiple"
+                                className="w-full"
+                                value={openAccordions}
+                                onValueChange={setOpenAccordions}
+                              >
+                                <AccordionItem
+                                  value={fileName}
+                                  className="w-full"
+                                >
+                                  <AccordionTrigger>
+                                    <div className="inline-flex items-center gap-8">
+                                      <span>{fileName}</span>
+                                      <ProgressPulseRoot status={status!}>
+                                        <ProgressPulseContent />
+                                      </ProgressPulseRoot>
+                                    </div>
+                                  </AccordionTrigger>
+                                  <AccordionContent>
+                                    {/* SortableRoot for pages */}
+                                    <SortableRoot
+                                      sensors={sensors}
+                                      items={Array.from(pages.keys()).map(
+                                        (pageNumber) => ({
+                                          id: `${fileName}-${pageNumber}`,
+                                        })
+                                      )}
+                                      onDragEnd={handlePageDragEnd(fileName)}
+                                      modifiers={[
+                                        restrictToVerticalAxis,
+                                        restrictToParentElement,
+                                      ]}
+                                    >
+                                      <SortableContent>
+                                        {Array.from(pages.entries()).map(
+                                          ([page, { status, url }]) => (
+                                            <SortableItem
+                                              key={`${fileName}-${page}`}
+                                              id={`${fileName}-${page}`}
+                                              disabled={isSortingDisabled(
+                                                status!,
+                                                pages.size
+                                              )}
+                                            >
+                                              <div
+                                                className="flex items-center gap-5 justify-between py-2 w-full"
+                                                style={{
+                                                  contentVisibility: "auto",
+                                                  containIntrinsicSize: "54px",
+                                                }}
+                                              >
+                                                <div className="inline-flex items-center gap-5">
+                                                  <Image
+                                                    src={
+                                                      url ||
+                                                      "/PDF-upload-icon.svg"
+                                                    }
+                                                    className="w-10 h-10 object-cover rounded-sm"
+                                                    alt={`Page ${page}`}
+                                                    width={40}
+                                                    height={40}
+                                                  />
+                                                  <span>{`Page ${page}`}</span>
+                                                </div>
+                                                <ProgressPulseRoot
+                                                  status={status}
+                                                >
+                                                  <ProgressPulseContent />
+                                                </ProgressPulseRoot>
+                                              </div>
+                                            </SortableItem>
+                                          )
+                                        )}
+                                      </SortableContent>
+                                    </SortableRoot>
+                                  </AccordionContent>
+                                </AccordionItem>
+                              </Accordion>
+                            ) : (
+                              <div className="flex items-center gap-5 justify-between py-2">
+                                <div className="inline-flex items-center gap-5">
+                                  <Image
+                                    src={
+                                      Array.from(pages.values())[0]?.url ||
+                                      "/JPG-upload-icon.svg"
+                                    }
+                                    alt={fileName}
+                                    className="w-10 h-10 object-cover rounded-sm"
+                                    width={30}
+                                    height={30}
+                                  />
+                                  <span>{fileName}</span>
+                                </div>
+                                <ProgressPulseRoot
+                                  status={Array.from(pages.values())[0]?.status}
+                                >
+                                  <ProgressPulseContent />
+                                </ProgressPulseRoot>
+                              </div>
+                            )}
+                          </div>
+                        </SortableItem>
+                      );
+                    }
+                  )}
+                </SortableContent>
               </SortableRoot>
             </div>
           </ScrollArea>

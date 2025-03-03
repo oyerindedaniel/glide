@@ -8,7 +8,7 @@ export default async function Reader() {
       <div className="grow bg-[#0B0B0B] h-full overflow-hidden">
         {/* <MangaReader /> */}
       </div>
-      <div className="w-[25.83%] bg-black p-6">
+      <div className="w-[25%] bg-black p-6">
         <Link className="" href="/">
           <Image
             className="w-28"

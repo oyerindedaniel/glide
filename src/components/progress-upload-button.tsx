@@ -114,6 +114,7 @@ export function ProgressUploadButton(props: ProgressUploadButtonProps) {
 
   useEffect(() => {
     const element = animateItemRef.current;
+
     if (element) {
       setNodeRef(element);
     }
@@ -135,6 +136,7 @@ export function ProgressUploadButton(props: ProgressUploadButtonProps) {
         unoptimized
         width={78}
         height={84}
+        aria-hidden
       />
       {isPresent && (
         <button

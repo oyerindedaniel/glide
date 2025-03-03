@@ -18,6 +18,7 @@ import { Panels } from "@/components/panels";
 import Header from "@/components/header";
 import { cn } from "@/lib/utils";
 import { useElementMutationListener } from "@/hooks/use-element-mutation-listener";
+import { useDropAnimationStore } from "@/store/drop-animation-store";
 
 const defaultClasses =
   "text-center p-4 absolute top-2/4 left-2/4 -translate-x-2/4 -translate-y-2/4";
@@ -47,6 +48,14 @@ export default function Home() {
   const searchInputRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [switchButtonTop, setSwitchButtonTop] = useState<number>(0);
+
+  const { cleanup } = useDropAnimationStore();
+
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
 
   /**
    * Updates the position of the switch button based on the active component.
@@ -103,8 +112,6 @@ export default function Home() {
       setMode(Mode.UPLOAD);
     }
   }, [searchParams, mode]);
-
-  console.log("mode", !!mode);
 
   return (
     <Background>

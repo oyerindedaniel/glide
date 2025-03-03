@@ -87,6 +87,23 @@ function SortableRoot<T extends { id: string }>({
 }
 SortableRoot.displayName = "SortableRoot";
 
+const SortableContent = React.memo(
+  React.forwardRef<HTMLDivElement, React.ComponentProps<"div">>(
+    function SortableContent({ className, children, ...rest }, ref) {
+      return (
+        <div
+          ref={ref}
+          className={cn("flex flex-col gap-2", className)}
+          {...rest}
+        >
+          {children}
+        </div>
+      );
+    }
+  )
+);
+SortableContent.displayName = "SortableContent";
+
 interface SortableItemProps {
   id: string;
   disabled?: boolean;
@@ -98,8 +115,9 @@ function SortableItem({
   id,
   disabled = false,
   asHandle = true,
+  className,
   children,
-}: SortableItemProps) {
+}: SortableItemProps & React.ComponentPropsWithoutRef<"div">) {
   const {
     attributes,
     listeners,
@@ -129,7 +147,8 @@ function SortableItem({
           {
             "border-2 border-dashed border-primary rounded-lg px-2 bg-primary/20 z-500":
               isDragging,
-          }
+          },
+          className
         )}
       >
         {!disabled && asHandle && (
@@ -142,22 +161,28 @@ function SortableItem({
 }
 SortableItem.displayName = "SortableItem";
 
-const SortableHandle = React.forwardRef(function SortableHandle(
-  { listeners }: { listeners?: SyntheticListenerMap },
-  ref: React.Ref<HTMLButtonElement>
-) {
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="cursor-grab p-0 h-6 w-6"
-      ref={ref}
-      {...(listeners ?? {})}
-    >
-      <GripVertical className="h-4 w-4" />
-    </Button>
-  );
-});
+interface SortableHandleProps
+  extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  listeners?: SyntheticListenerMap;
+}
+const SortableHandle = React.memo(
+  React.forwardRef<HTMLButtonElement, SortableHandleProps>(
+    function SortableHandle({ listeners, ...rest }, ref) {
+      return (
+        <Button
+          ref={ref}
+          variant="ghost"
+          size="icon"
+          className="cursor-grab p-0 h-6 w-6"
+          {...listeners}
+          {...rest}
+        >
+          <GripVertical className="h-4 w-4" />
+        </Button>
+      );
+    }
+  )
+);
 SortableHandle.displayName = "SortableHandle";
 
 interface SortableOverlayProps<T> {
@@ -181,8 +206,8 @@ SortableOverlay.displayName = "SortableOverlay";
 
 export {
   SortableRoot,
+  SortableContent,
   SortableItem,
   SortableHandle,
   SortableOverlay,
-  SortableContextCtx,
 };
