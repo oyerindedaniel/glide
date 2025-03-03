@@ -55,6 +55,13 @@ interface ProcessedFileState {
 
   removeFile: (fileName: string) => void;
   removePage: (fileName: string, pageNumber: number) => void;
+
+  getAllPages: () => Array<{
+    fileName: string;
+    pageNumber: number;
+    url: string;
+    status: ProcessingStatus;
+  }>;
 }
 
 const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
@@ -321,6 +328,29 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       return { processedFiles: newProcessedFiles };
     });
     get().checkAllFilesProcessed();
+  },
+
+  getAllPages: () => {
+    const { processedFiles } = get();
+    const allPages: Array<{
+      fileName: string;
+      pageNumber: number;
+      url: string;
+      status: ProcessingStatus;
+    }> = [];
+
+    for (const [fileName, pages] of processedFiles) {
+      for (const [pageNumber, page] of pages) {
+        allPages.push({
+          fileName,
+          pageNumber,
+          url: page.url,
+          status: page.status,
+        });
+      }
+    }
+
+    return allPages;
   },
 }));
 

@@ -156,6 +156,8 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
 
         const arrayBuffer = await blob.arrayBuffer();
 
+        page.cleanup();
+
         const response: WorkerResponse = {
           type: WorkerMessageType.PageProcessed,
           pageNumber,

@@ -20,9 +20,12 @@ function Header() {
         />
       </Link>
 
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-8">
         <Button variant="link" size="sm" className="p-0 h-fit">
           About
+        </Button>
+        <Button variant="link" size="sm" className="p-0 h-fit" asChild>
+          <Link href="/reader">Reader</Link>
         </Button>
         {/* <button
           onClick={toggleMenu}

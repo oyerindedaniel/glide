@@ -59,7 +59,7 @@ interface FileDropZoneProps {}
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const ALLOWED_FILE_TYPES = [...ALLOWED_IMAGE_TYPES, "application/pdf"];
 
-export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
+const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
   function FileDropZone({}, ref) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dropOverlayRef = useRef<HTMLDivElement>(null);
@@ -663,6 +663,8 @@ export const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     );
   }
 );
+
+export default FileDropZone;
 
 /** Process single page */
 async function processPage(pdf: pdfjsLib.PDFDocumentProxy, pageNumber: number) {

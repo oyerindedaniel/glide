@@ -1,5 +1,5 @@
 @import "tailwindcss";
-/* @plugin "tailwindcss-animate"; */
+@plugin "tailwindcss-animate";
 
 @theme {
   --animate-grow: grow 2s ease-out forwards;
@@ -29,6 +29,9 @@
   --color-border: #262626;
 
   --color-button-primary: #908a8a;
+
+  --color-sidebar-background: #000000;
+  --color-sidebar-foreground: #ffffff;
 
   @keyframes panel-slide {
     0% {
