@@ -124,6 +124,7 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
 
         // Adjust viewport scale based on maxDimension constraint
         const originalViewport = page.getViewport({ scale: 1.0 });
+        // TODO: review this scale factor and config options: root for initial dimension for how manga woud look like across various screens size even after maintaining aspect ratio
         const scale = Math.min(
           config.maxDimension /
             Math.max(originalViewport.width, originalViewport.height),

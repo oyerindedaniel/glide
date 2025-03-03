@@ -56,7 +56,10 @@ export class PDFProcessor {
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.onError = options.onError;
     this.worker = new Worker(
-      new URL("../worker/pdf.worker.ts", import.meta.url)
+      new URL("../worker/pdf.worker.ts", import.meta.url),
+      {
+        type: "module",
+      }
     );
     this.pageCache = new Map();
     this.processingQueue = [];
