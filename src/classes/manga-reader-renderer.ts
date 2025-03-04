@@ -6,7 +6,7 @@ const RENDER_QUALITY = 1.0;
 
 class MangaReaderRenderer {
   private canvas: HTMLCanvasElement;
-  private context: CanvasRenderingContext2D | null;
+  private context: CanvasRenderingContext2D | null = null;
   private worker: Worker | null = null;
   private observer: IntersectionObserver;
   private pageContainers: Map<string, HTMLDivElement> = new Map();
@@ -15,8 +15,10 @@ class MangaReaderRenderer {
   private visiblePages: Set<string> = new Set();
   private loadingQueue: string[] = [];
   private parentRef: HTMLElement; // Store the parent element
+  private pageCanvases: Map<string, HTMLCanvasElement> = new Map();
   private pageDimensions: Map<string, { width: number; height: number }> =
     new Map(); // Store image dimensions
+  private resizeHandler: () => void;
 
   constructor(canvasContainer: HTMLElement = document.body) {
     // Default to document.body if no parentRef is provided
@@ -24,7 +26,6 @@ class MangaReaderRenderer {
 
     this.canvas = document.createElement("canvas");
     this.canvas.className = "manga-reader-canvas";
-    this.context = this.canvas.getContext("2d", { alpha: false });
     this.parentRef.appendChild(this.canvas);
 
     this.observer = new IntersectionObserver(
@@ -38,9 +39,12 @@ class MangaReaderRenderer {
 
     if (window.OffscreenCanvas && window.Worker) {
       this.initWorker();
+    } else {
+      this.context = this.canvas.getContext("2d", { alpha: false });
     }
 
-    window.addEventListener("resize", this.handleResize.bind(this));
+    this.resizeHandler = this.handleResize.bind(this);
+    window.addEventListener("resize", this.resizeHandler);
     this.handleResize();
   }
 
@@ -86,15 +90,15 @@ class MangaReaderRenderer {
       }
     }
 
-    this.canvas.width = containerWidth;
-    this.canvas.height = newHeight;
-
     if (this.worker) {
       this.worker.postMessage({
         type: WorkerMessageType.RESIZE,
-        width: this.canvas.width,
-        height: this.canvas.height,
+        width: containerWidth,
+        height: newHeight,
       });
+    } else {
+      this.canvas.width = containerWidth;
+      this.canvas.height = newHeight;
     }
     this.renderVisiblePages();
   }
@@ -136,10 +140,15 @@ class MangaReaderRenderer {
       scrollContainer.appendChild(pageEl);
       this.pageContainers.set(pageId, pageEl);
       this.observer.observe(pageEl);
+    });
 
-      if (status === ProcessingStatus.COMPLETED && url) {
-        this.enqueuePageLoad(pageId, url);
-      }
+    const initialPages = allPages
+      .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
+      .slice(0, BUFFER_SIZE);
+
+    initialPages.forEach(({ fileName, pageNumber, url }) => {
+      const pageId = `${fileName}_${pageNumber}`;
+      this.enqueuePageLoad(pageId, url);
     });
 
     this.processLoadingQueue();
@@ -294,6 +303,7 @@ class MangaReaderRenderer {
     const memCtx = memCanvas.getContext("2d");
     if (memCtx) {
       memCtx.drawImage(img, 0, 0);
+      this.pageCanvases.set(pageId, memCanvas);
       this.onPageRendered(pageId);
     }
   }
@@ -313,22 +323,23 @@ class MangaReaderRenderer {
 
     const centerPage = this.determineCurrentPage(visibleLoadedPages);
 
-    // Update canvas size if the current page has changed
     if (centerPage !== this.currentPageId) {
       this.currentPageId = centerPage;
       const dimensions = this.pageDimensions.get(centerPage);
       if (dimensions) {
         const containerWidth = this.parentRef.clientWidth || window.innerWidth;
         const aspectRatio = dimensions.height / dimensions.width;
-        this.canvas.width = containerWidth;
-        this.canvas.height = containerWidth * aspectRatio;
+        const newHeight = containerWidth * aspectRatio;
 
         if (this.worker) {
           this.worker.postMessage({
             type: WorkerMessageType.RESIZE,
-            width: this.canvas.width,
-            height: this.canvas.height,
+            width: containerWidth,
+            height: newHeight,
           });
+        } else {
+          this.canvas.width = containerWidth;
+          this.canvas.height = newHeight;
         }
       }
     }
@@ -340,6 +351,18 @@ class MangaReaderRenderer {
       });
     } else if (this.context) {
       this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      const memCanvas = this.pageCanvases.get(centerPage);
+      if (memCanvas) {
+        const scale = Math.min(
+          this.canvas.width / memCanvas.width,
+          this.canvas.height / memCanvas.height
+        );
+        const scaledWidth = memCanvas.width * scale;
+        const scaledHeight = memCanvas.height * scale;
+        const x = (this.canvas.width - scaledWidth) / 2;
+        const y = (this.canvas.height - scaledHeight) / 2;
+        this.context.drawImage(memCanvas, x, y, scaledWidth, scaledHeight);
+      }
     }
   }
 
@@ -395,10 +418,25 @@ class MangaReaderRenderer {
     }
     this.loadedPages.clear();
     this.visiblePages.clear();
+    this.pageCanvases.clear();
     this.pageContainers.clear();
     this.pageDimensions.clear();
     this.loadingQueue = [];
-    window.removeEventListener("resize", this.handleResize.bind(this));
+
+    if (this.canvas.parentNode) {
+      this.canvas.parentNode.removeChild(this.canvas);
+    }
+
+    const scrollContainers = this.parentRef.querySelectorAll(
+      ".manga-scroll-container"
+    );
+    scrollContainers.forEach((container) => {
+      if (container.parentNode) {
+        container.parentNode.removeChild(container);
+      }
+    });
+
+    window.removeEventListener("resize", this.resizeHandler);
   }
 }
 

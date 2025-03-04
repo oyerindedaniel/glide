@@ -9,7 +9,7 @@ import { useShallow } from "zustand/shallow";
 
 export default function Reader() {
   const allPages = useProcessedFilesStore(
-    useShallow((state) => state.getAllPages())
+    useShallow((state) => state.allPages)
   );
 
   return (

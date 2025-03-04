@@ -25,6 +25,12 @@ interface ProcessedFileState {
   totalFiles: number;
   allFilesProcessed: boolean;
   statusCounts: Record<ProcessingStatus, number>;
+  allPages: Array<{
+    fileName: string;
+    pageNumber: number;
+    url: string;
+    status: ProcessingStatus;
+  }>;
 
   // Methods to manage the store
   addFile: (
@@ -48,6 +54,7 @@ interface ProcessedFileState {
   computeStatusCounts: () => void;
   checkAllFilesProcessed: () => void;
   reset: () => void;
+  updateAllPages: () => void;
 
   // For sorting
   reorderFiles: (newOrder: string[]) => void;
@@ -55,13 +62,6 @@ interface ProcessedFileState {
 
   removeFile: (fileName: string) => void;
   removePage: (fileName: string, pageNumber: number) => void;
-
-  getAllPages: () => Array<{
-    fileName: string;
-    pageNumber: number;
-    url: string;
-    status: ProcessingStatus;
-  }>;
 }
 
 const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
@@ -76,6 +76,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     [ProcessingStatus.COMPLETED]: 0,
     [ProcessingStatus.FAILED]: 0,
   },
+  allPages: [],
 
   /**
    * Adds a new file with a NOT_STARTED status and prepares its pages.
@@ -130,6 +131,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     });
 
     get().checkAllFilesProcessed();
+    get().updateAllPages();
   },
 
   /**
@@ -214,6 +216,21 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     });
 
     set({ allFilesProcessed: completedFiles === totalFiles });
+  },
+
+  updateAllPages: () => {
+    const { processedFiles } = get();
+    const pages = Array.from(processedFiles.entries()).flatMap(
+      ([fileName, pageMap]) =>
+        Array.from(pageMap.entries()).map(([pageNumber, { url, status }]) => ({
+          fileName,
+          pageNumber,
+          url,
+          status,
+        }))
+    );
+
+    set({ allPages: pages });
   },
 
   /**
@@ -328,29 +345,6 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       return { processedFiles: newProcessedFiles };
     });
     get().checkAllFilesProcessed();
-  },
-
-  getAllPages: () => {
-    const { processedFiles } = get();
-    const allPages: Array<{
-      fileName: string;
-      pageNumber: number;
-      url: string;
-      status: ProcessingStatus;
-    }> = [];
-
-    for (const [fileName, pages] of processedFiles) {
-      for (const [pageNumber, page] of pages) {
-        allPages.push({
-          fileName,
-          pageNumber,
-          url: page.url,
-          status: page.status,
-        });
-      }
-    }
-
-    return allPages;
   },
 }));
 

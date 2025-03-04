@@ -10,8 +10,9 @@ export function MangaEmptyState() {
         alt="No pages available"
         width={150}
         height={150}
-        className="mb-4 opacity-70"
+        className="mb-4 opacity-70 w-42"
         unoptimized
+        priority
       />
       <h2 className="text-xl font-semibold mb-2">No Manga Pages Available</h2>
       <p className="text-gray-400 text-center max-w-md">
