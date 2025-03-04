@@ -1,10 +1,11 @@
-import { WorkerMessageType } from "@/classes/manga-reader-renderer";
+import { WorkerMessageType } from "@/types/renderer";
 
 interface CachedPage {
   width: number;
   height: number;
   bitmap?: ImageBitmap;
   loaded: boolean;
+  lastAccessed: number;
 }
 
 type WorkerMessage =
@@ -35,210 +36,152 @@ let canvasHeight = 0;
 
 const pageCache = new Map<string, CachedPage>();
 
-self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
-  const { type } = event.data;
-
-  try {
-    switch (type) {
-      case WorkerMessageType.INIT:
-        initCanvas(
-          event.data as Extract<WorkerMessage, { type: WorkerMessageType.INIT }>
-        );
-        break;
-
-      case WorkerMessageType.RESIZE:
-        handleResize(
-          event.data as Extract<
-            WorkerMessage,
-            { type: WorkerMessageType.RESIZE }
-          >
-        );
-        break;
-
-      case WorkerMessageType.CACHE_IMAGE:
-        await cacheImage(
-          event.data as Extract<
-            WorkerMessage,
-            { type: WorkerMessageType.CACHE_IMAGE }
-          >
-        );
-        break;
-
-      case WorkerMessageType.RENDER_PAGE:
-        renderPage(
-          event.data as Extract<
-            WorkerMessage,
-            { type: WorkerMessageType.RENDER_PAGE }
-          >
-        );
-        break;
-
-      case WorkerMessageType.CLEAR_CACHE:
-        clearCache();
-        break;
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    self.postMessage({ type: WorkerMessageType.ERROR, error: errorMessage });
-  }
-});
-
 /**
- * Initialize the offscreen canvas
+ * Prunes the cache to maintain a maximum size by removing the least recently accessed pages.
  */
-function initCanvas(
-  data: Extract<WorkerMessage, { type: WorkerMessageType.INIT }>
-): void {
-  canvas = data.canvas;
-  ctx = canvas.getContext("2d", { alpha: false });
+function pruneCache(): void {
+  if (pageCache.size <= 10) return;
 
-  if (!ctx) {
-    throw new Error("Failed to get canvas context");
-  }
+  const entries = Array.from(pageCache.entries());
 
-  canvasWidth = data.width || canvas.width;
-  canvasHeight = data.height || canvas.height;
+  // Sort by last accessed time (older entries come first)
+  const sorted = entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
 
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
+  // Keep the latest 5 entries + the current page
+  const toRemove = sorted
+    .filter(([key]) => key !== currentPageId)
+    .slice(0, sorted.length - 5);
 
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  toRemove.forEach(([key, page]) => {
+    page.bitmap?.close();
+    pageCache.delete(key);
+  });
 }
 
 /**
- * Handle canvas resize
+ * Clears the canvas by filling it with a white background.
  */
-function handleResize(
-  data: Extract<WorkerMessage, { type: WorkerMessageType.RESIZE }>
-): void {
-  if (!canvas || !ctx) return;
-
-  canvasWidth = data.width;
-  canvasHeight = data.height;
-
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
-
-  if (currentPageId) {
-    renderPageById(currentPageId);
+function clearCanvas(): void {
+  if (ctx && canvas) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
 
 /**
- * Cache an image for a page
+ * Renders a cached page on the canvas, scaling it to fit while maintaining aspect ratio.
+ *
+ * @param {CachedPage} page - The page to render on the canvas.
  */
-async function cacheImage(
-  data: Extract<WorkerMessage, { type: WorkerMessageType.CACHE_IMAGE }>
-): Promise<void> {
-  const { pageId, url, width, height } = data;
+function renderPage(page: CachedPage): void {
+  if (!ctx || !canvas) return;
 
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
+  clearCanvas();
 
-    const bitmap = await createImageBitmap(blob);
-
-    pageCache.set(pageId, {
-      width,
-      height,
-      bitmap,
-      loaded: true,
-    });
-
-    self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
-
-    if (currentPageId === pageId) {
-      renderPageById(pageId);
-    }
-
-    if (pageCache.size > 10) {
-      cleanupCache();
-    }
-  } catch (error) {
-    console.error("Error caching image:", error);
-    throw error;
-  }
-}
-
-/**
- * Render a page from the message data
- */
-function renderPage(
-  data: Extract<WorkerMessage, { type: WorkerMessageType.RENDER_PAGE }>
-): void {
-  const { pageId } = data;
-  currentPageId = pageId;
-  renderPageById(pageId);
-}
-
-/**
- * Render a specific page by its ID
- */
-function renderPageById(pageId: string): void {
-  if (!canvas || !ctx || !pageId) return;
-
-  const page = pageCache.get(pageId);
-  if (!page || !page.bitmap) return;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Calculate centered position and scaling
   const scale = Math.min(
     canvas.width / page.width,
     canvas.height / page.height
   );
-
   const scaledWidth = page.width * scale;
   const scaledHeight = page.height * scale;
 
   const x = (canvas.width - scaledWidth) / 2;
   const y = (canvas.height - scaledHeight) / 2;
 
-  // Draw image
-  ctx.drawImage(page.bitmap, x, y, scaledWidth, scaledHeight);
-
-  self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
+  ctx.drawImage(page.bitmap!, x, y, scaledWidth, scaledHeight);
 }
 
-/**
- * Clear the image cache
- */
-function clearCache(): void {
-  for (const page of pageCache.values()) {
-    if (page.bitmap) {
-      page.bitmap.close();
+self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
+  const { type } = event.data;
+
+  try {
+    switch (type) {
+      case WorkerMessageType.INIT: {
+        const { canvas: initCanvas, width, height } = event.data;
+
+        canvas = initCanvas;
+        ctx = canvas.getContext("2d", { alpha: false });
+
+        if (!ctx) throw new Error("Failed to get canvas context");
+
+        canvasWidth = width || canvas.width;
+        canvasHeight = height || canvas.height;
+
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        clearCanvas();
+        break;
+      }
+
+      case WorkerMessageType.RESIZE: {
+        if (!canvas || !ctx) return;
+
+        const { width, height } = event.data;
+
+        canvasWidth = width;
+        canvasHeight = height;
+
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+
+        if (currentPageId) {
+          const page = pageCache.get(currentPageId);
+          if (page && page.bitmap) renderPage(page);
+        }
+        break;
+      }
+
+      case WorkerMessageType.CACHE_IMAGE: {
+        const { pageId, url, width, height } = event.data;
+
+        try {
+          const response = await fetch(url);
+          const blob = await response.blob();
+          const bitmap = await createImageBitmap(blob);
+
+          pageCache.set(pageId, {
+            width,
+            height,
+            bitmap,
+            loaded: true,
+            lastAccessed: Date.now(),
+          });
+          self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
+
+          if (currentPageId === pageId) renderPage(pageCache.get(pageId)!);
+
+          pruneCache();
+        } catch (error) {
+          console.error("Error caching image:", error);
+          throw error;
+        }
+        break;
+      }
+
+      case WorkerMessageType.RENDER_PAGE: {
+        const { pageId } = event.data;
+        currentPageId = pageId;
+
+        const page = pageCache.get(pageId);
+        if (page && page.bitmap) {
+          renderPage(page);
+          page.lastAccessed = Date.now();
+          self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
+
+          pruneCache();
+        }
+        break;
+      }
+
+      case WorkerMessageType.CLEAR_CACHE: {
+        pageCache.forEach((page) => page.bitmap?.close());
+        pageCache.clear();
+        break;
+      }
     }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    self.postMessage({ type: WorkerMessageType.ERROR, error: errorMessage });
   }
-
-  pageCache.clear();
-}
-
-/**
- * Cleanup the least recently used items from cache
- */
-function cleanupCache(): void {
-  if (pageCache.size <= 5) return;
-
-  const entries = Array.from(pageCache.entries());
-
-  // Sort by distance from current page
-  const sorted = entries.sort((a, b) => {
-    // Keep current page
-    if (a[0] === currentPageId) return 1;
-    if (b[0] === currentPageId) return -1;
-
-    // Otherwise sort by pageId (simple approach)
-    return a[0].localeCompare(b[0]);
-  });
-
-  // Remove oldest entries
-  const toRemove = sorted.slice(0, sorted.length - 5);
-  for (const [key, page] of toRemove) {
-    if (page.bitmap) {
-      page.bitmap.close();
-    }
-    pageCache.delete(key);
-  }
-}
+});

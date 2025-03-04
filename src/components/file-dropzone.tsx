@@ -34,6 +34,7 @@ import {
   MAX_PAGE_RETRIES,
 } from "@/constants/processing";
 import pLimit from "p-limit";
+import { useShallow } from "zustand/shallow";
 
 // if (typeof window !== "undefined") {
 //   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -78,14 +79,30 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
       setPageStatus,
       reset,
       processedFiles,
-    } = useProcessedFilesStore();
+    } = useProcessedFilesStore(
+      useShallow((state) => ({
+        addFile: state.addFile,
+        addPageToFile: state.addPageToFile,
+        setTotalFiles: state.setTotalFiles,
+        setFileStatus: state.setFileStatus,
+        setPageStatus: state.setPageStatus,
+        reset: state.reset,
+        processedFiles: state.processedFiles,
+      }))
+    );
     const {
       setIsDragging: setIsDraggingStore,
       isDragging: newDraggingState,
       animateToSnapPosition,
       setDropPosition,
-    } = useDropAnimationStore();
-
+    } = useDropAnimationStore(
+      useShallow((state) => ({
+        setIsDragging: state.setIsDragging,
+        isDragging: state.isDragging,
+        animateToSnapPosition: state.animateToSnapPosition,
+        setDropPosition: state.setDropPosition,
+      }))
+    );
     const { closePanel, openPanel } = usePanelStore();
 
     /** Cleanup when component unmounts */

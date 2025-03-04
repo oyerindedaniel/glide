@@ -38,6 +38,7 @@ import {
   restrictToVerticalAxis,
   restrictToParentElement,
 } from "@dnd-kit/modifiers";
+import { useShallow } from "zustand/shallow";
 
 export function ProgressUpload() {
   const {
@@ -48,7 +49,17 @@ export function ProgressUpload() {
     fileStatus,
     reorderFiles,
     reorderPages,
-  } = useProcessedFilesStore();
+  } = useProcessedFilesStore(
+    useShallow((state) => ({
+      totalFiles: state.totalFiles,
+      processedFiles: state.processedFiles,
+      allFilesProcessed: state.allFilesProcessed,
+      fileMetadata: state.fileMetadata,
+      fileStatus: state.fileStatus,
+      reorderFiles: state.reorderFiles,
+      reorderPages: state.reorderPages,
+    }))
+  );
   const { getActivePanels, closePanel, openPanel } = usePanelStore();
   const [openAccordions, setOpenAccordions] = useState<string[]>([]);
   const { center } = getActivePanels();

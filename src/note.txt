@@ -13,3 +13,12 @@ Further Improvements (If Needed)
 Exponential Backoff – Add a delay between retries to avoid overwhelming the system.
 Detailed Metrics – Track how many pages succeeded/failed and retries performed for better monitoring.
 Dynamic Concurrency – Increase MAX_CONCURRENT_FILES dynamically based on system load.
+
+
+parentRef (e.g., <div>)
+  ├── canvas (position: static, z-index: 0, block-level)
+  └── scrollContainer (position: absolute, z-index: -1, top: 0, left: 0, 100% width/height)
+        ├── pageEl-1 (height: 100svh)
+        ├── pageEl-2 (height: 100svh)
+        ├── pageEl-3 (height: 100svh)
+        └── ... (stacked vertically)

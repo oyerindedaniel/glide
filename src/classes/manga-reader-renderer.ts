@@ -1,17 +1,8 @@
 import { ProcessingStatus } from "@/store/processed-files";
+import { WorkerMessageType } from "@/types/renderer";
 
 const BUFFER_SIZE = 3;
 const RENDER_QUALITY = 1.0;
-
-export enum WorkerMessageType {
-  INIT = "init",
-  RESIZE = "resize",
-  CACHE_IMAGE = "cacheImage",
-  RENDER_PAGE = "renderPage",
-  CLEAR_CACHE = "clearCache",
-  RENDERED = "rendered",
-  ERROR = "error",
-}
 
 class MangaReaderRenderer {
   private canvas: HTMLCanvasElement;
@@ -36,10 +27,6 @@ class MangaReaderRenderer {
     this.context = this.canvas.getContext("2d", { alpha: false });
     this.parentRef.appendChild(this.canvas);
 
-    if (window.OffscreenCanvas && window.Worker) {
-      this.initWorker();
-    }
-
     this.observer = new IntersectionObserver(
       this.handleIntersection.bind(this),
       {
@@ -49,6 +36,10 @@ class MangaReaderRenderer {
       }
     );
 
+    if (window.OffscreenCanvas && window.Worker) {
+      this.initWorker();
+    }
+
     window.addEventListener("resize", this.handleResize.bind(this));
     this.handleResize();
   }
@@ -56,8 +47,7 @@ class MangaReaderRenderer {
   private initWorker(): void {
     try {
       this.worker = new Worker(
-        new URL("../worker/canvas.worker.ts", import.meta.url),
-        { type: "module" }
+        new URL("../worker/canvas.worker.ts", import.meta.url)
       );
       const offscreen = this.canvas.transferControlToOffscreen();
       this.worker.postMessage(
@@ -194,7 +184,7 @@ class MangaReaderRenderer {
         pageEl.dataset.url = url || "";
         pageEl.dataset.status = status;
         pageEl.className = "manga-page-placeholder";
-        pageEl.style.height = "100vh";
+        pageEl.style.height = "100svh";
         pageEl.style.width = "100%";
 
         scrollContainer.appendChild(pageEl);
@@ -372,9 +362,18 @@ class MangaReaderRenderer {
   }
 
   private checkVisiblePages(): void {
+    const viewportHeight = window.innerHeight;
     this.pageContainers.forEach((pageEl, pageId) => {
       const rect = pageEl.getBoundingClientRect();
-      const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+      const isVisible = rect.top < viewportHeight && rect.bottom > 0;
+      // Check if at least 20% of the page is visible
+      //   const pageHeight = rect.height;
+      //   const visibleThreshold = pageHeight * 0.2;
+
+      //   const isVisible =
+      //     rect.top < viewportHeight - visibleThreshold &&
+      //     rect.bottom > visibleThreshold;
+
       if (isVisible) {
         this.visiblePages.add(pageId);
         const url = pageEl.dataset.url || "";
