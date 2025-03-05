@@ -3,9 +3,8 @@
 import { useProcessedFilesStore } from "@/store/processed-files";
 import { MangaReader } from "@/components/manga/manga-reader";
 import { MangaEmptyState } from "@/components/manga/manga-empty-state";
-import Image from "next/image";
-import Link from "next/link";
 import { useShallow } from "zustand/shallow";
+import { MangaSidebar } from "@/components/manga/manga-sidebar";
 
 export default function Reader() {
   const allPages = useProcessedFilesStore(
@@ -13,26 +12,16 @@ export default function Reader() {
   );
 
   return (
-    <div className="flex h-svh">
-      <div className="grow bg-[#0B0B0B] h-full overflow-hidden">
+    <div className="h-svh w-full">
+      <div className="md:w-[75%] bg-[#0B0B0B] ease-in-out h-full overflow-hidden w-full transition-[width] duration-800 fixed top-0 left-0 z-10">
         {allPages.length === 0 ? (
           <MangaEmptyState />
         ) : (
           <MangaReader mangaId="1" allPages={allPages} />
         )}
       </div>
-      <div className="w-[25%] bg-black p-6">
-        <Link className="" href="/">
-          <Image
-            className="w-28"
-            src="/manga-glide.svg"
-            alt="logo"
-            width={133}
-            height={30}
-            unoptimized
-            priority
-          />
-        </Link>
+      <div className="w-[25%] h-svh bg-black p-3 lg:p-6 fixed right-0 top-0 z-5">
+        <MangaSidebar />
       </div>
     </div>
   );

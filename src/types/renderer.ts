@@ -6,4 +6,5 @@ export enum WorkerMessageType {
   CLEAR_CACHE = "clearCache",
   RENDERED = "rendered",
   ERROR = "error",
+  TERMINATE = "terminate",
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { ProcessingStatus } from "@/store/processed-files";
 import { MangaReaderRenderer } from "@/classes/manga-reader-renderer";
 
@@ -14,7 +14,10 @@ interface MangaReaderProps {
   }>;
 }
 
-export function MangaReader({ mangaId, allPages }: MangaReaderProps) {
+export const MangaReader = memo(function MangaReader({
+  mangaId,
+  allPages,
+}: MangaReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<MangaReaderRenderer | null>(null);
 
@@ -33,17 +36,16 @@ export function MangaReader({ mangaId, allPages }: MangaReaderProps) {
   }, []);
 
   //   useEffect(() => {
-  //     // if (rendererRef.current) {
-  //     //   if (allPages.length === 0) return;
-  //     //   rendererRef.current.updatePages(allPages);
-  //     // }
+  //     if (rendererRef.current) {
+  //      rendererRef.current.updatePages(allPages);
+  //     }
   //   }, [allPages]);
 
   return (
     <div
       id="manga-container"
       ref={containerRef}
-      className="w-full h-svh relative overflow-y-auto"
+      className="w-full h-svh relative overflow-y-auto overflow-x-hidden"
     />
   );
-}
+});

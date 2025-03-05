@@ -25,6 +25,7 @@ type WorkerMessage =
     }
   | { type: WorkerMessageType.RENDER_PAGE; pageId: string }
   | { type: WorkerMessageType.CLEAR_CACHE }
+  | { type: WorkerMessageType.TERMINATE }
   | { type: WorkerMessageType.RENDERED; pageId: string }
   | { type: WorkerMessageType.ERROR; error: string };
 
@@ -177,6 +178,13 @@ self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
       case WorkerMessageType.CLEAR_CACHE: {
         pageCache.forEach((page) => page.bitmap?.close());
         pageCache.clear();
+        break;
+      }
+
+      case WorkerMessageType.TERMINATE: {
+        pageCache.forEach((page) => page.bitmap?.close());
+        pageCache.clear();
+        self.close();
         break;
       }
     }

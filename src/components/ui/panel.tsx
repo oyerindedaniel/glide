@@ -323,8 +323,12 @@ const PanelContent = React.forwardRef<
         {...props}
       >
         {children}
-        <PanelClose className="absolute p-0 h-fit w-fit !bg-transparent right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 data-[state=open]:bg-accent">
-          <X className="h-4 w-4 text-white" />
+        <PanelClose
+          size="icon"
+          variant="ghost"
+          className="absolute !h-7 !w-7 rounded-full right-4 top-4 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus:ring-ring focus:ring-offset-2 [&>svg]:text-white hover:[&>svg]:text-black"
+        >
+          <X className="h-4 w-4" />
         </PanelClose>
       </div>
     </PanelPortal>

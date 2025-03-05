@@ -7,7 +7,7 @@ import Image from "next/image";
  */
 function Header() {
   return (
-    <header className="flex justify-between items-center bg-transparent fixed top-4 w-full z-50 pl-12 pr-16 shadow-none">
+    <header className="flex justify-between items-center bg-transparent fixed top-8 w-full z-50 pl-12 pr-16 shadow-none">
       <Link href="/">
         <Image
           className="w-32"

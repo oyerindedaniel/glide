@@ -1,8 +1,9 @@
 import Image from "next/image";
 import { Button } from "../ui/button";
 import Link from "next/link";
+import { memo } from "react";
 
-export function MangaEmptyState() {
+export const MangaEmptyState = memo(function MangaEmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full text-white bg-transparent p-6">
       <Image
@@ -24,4 +25,4 @@ export function MangaEmptyState() {
       </Button>
     </div>
   );
-}
+});

@@ -40,8 +40,6 @@ export function ProgressUploadButton(props: ProgressUploadButtonProps) {
 
   const isOpen = center === PANEL_IDS.PROGRESS_UPLOAD;
 
-  const state = isOpen ? "open" : "closed";
-
   const isActive = useMemo(
     () => isDragging || totalFiles > 0,
     [isDragging, totalFiles]
@@ -138,19 +136,17 @@ export function ProgressUploadButton(props: ProgressUploadButtonProps) {
         height={84}
         aria-hidden
       />
+
       {isPresent && (
+        // TODO: change to panel trigger
         <button
           onClick={() => openPanel(PANEL_IDS.PROGRESS_UPLOAD, PanelType.CENTER)}
           disabled={!isProcessedFiles}
-          data-present={isActive}
-          data-dropped={isProcessedFiles || undefined}
-          data-state={state}
+          {...(isProcessedFiles ? { "data-dropped": true } : {})}
           ref={elementRef}
           className={cn(
             "group absolute bottom-12 left-12 cursor-pointer hover:scale-105 transition-transform duration-500",
-            isProcessedFiles && !hasPanelBeenOpened
-              ? "data-dropped:animate-bounce"
-              : ""
+            { "data-dropped:animate-bounce": !hasPanelBeenOpened }
           )}
         >
           <div className="relative">

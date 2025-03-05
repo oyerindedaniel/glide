@@ -26,6 +26,7 @@ class MangaReaderRenderer {
 
     this.canvas = document.createElement("canvas");
     this.canvas.className = "manga-reader-canvas";
+    this.canvas.style.boxSizing = "border-box";
     this.parentRef.appendChild(this.canvas);
 
     this.observer = new IntersectionObserver(
@@ -33,7 +34,7 @@ class MangaReaderRenderer {
       {
         root: null,
         rootMargin: "200px",
-        threshold: 0.01,
+        threshold: 0.1,
       }
     );
 
@@ -78,7 +79,9 @@ class MangaReaderRenderer {
   }
 
   private handleResize(): void {
-    const containerWidth = this.parentRef.clientWidth || window.innerWidth;
+    const containerWidth = Math.floor(
+      this.parentRef.clientWidth || window.innerWidth
+    );
     let newHeight = window.innerHeight;
 
     // If there's a current page, adjust height based on its aspect ratio
@@ -86,7 +89,7 @@ class MangaReaderRenderer {
       const dimensions = this.pageDimensions.get(this.currentPageId);
       if (dimensions) {
         const aspectRatio = dimensions.height / dimensions.width;
-        newHeight = containerWidth * aspectRatio;
+        newHeight = Math.floor(containerWidth * aspectRatio);
       }
     }
 
@@ -141,6 +144,8 @@ class MangaReaderRenderer {
       this.pageContainers.set(pageId, pageEl);
       this.observer.observe(pageEl);
     });
+
+    // this.currentPageId = allPages[0]?.fileName + "_" + allPages[0]?.pageNumber;
 
     const initialPages = allPages
       .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
@@ -232,12 +237,15 @@ class MangaReaderRenderer {
       }
     });
 
+    console.log({ visiblePagesAddedFromObserver: this.visiblePages });
+
     if (needsRender) {
       this.processLoadingQueue();
       this.renderVisiblePages();
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private enqueuePageLoad(pageId: string, url: string): void {
     if (this.loadedPages.has(pageId) || this.loadingQueue.includes(pageId))
       return;
@@ -252,6 +260,8 @@ class MangaReaderRenderer {
     this.loadingQueue = this.loadingQueue.filter(
       (id) => !toProcess.includes(id)
     );
+
+    // console.log({ toProcess, loadingQueue: this.loadingQueue });
 
     for (const pageId of toProcess) {
       const pageEl = this.pageContainers.get(pageId);
@@ -287,7 +297,7 @@ class MangaReaderRenderer {
         } else {
           this.drawImageToCanvas(pageId, img);
         }
-        this.loadedPages.add(pageId);
+        // this.loadedPages.add(pageId);
         resolve();
       };
       img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
@@ -323,24 +333,30 @@ class MangaReaderRenderer {
 
     const centerPage = this.determineCurrentPage(visibleLoadedPages);
 
-    if (centerPage !== this.currentPageId) {
-      this.currentPageId = centerPage;
-      const dimensions = this.pageDimensions.get(centerPage);
-      if (dimensions) {
-        const containerWidth = this.parentRef.clientWidth || window.innerWidth;
-        const aspectRatio = dimensions.height / dimensions.width;
-        const newHeight = containerWidth * aspectRatio;
+    console.log("visibleLoadedPages", { visibleLoadedPages, centerPage });
 
-        if (this.worker) {
-          this.worker.postMessage({
-            type: WorkerMessageType.RESIZE,
-            width: containerWidth,
-            height: newHeight,
-          });
-        } else {
-          this.canvas.width = containerWidth;
-          this.canvas.height = newHeight;
-        }
+    if (centerPage === this.currentPageId) {
+      return;
+    }
+
+    this.currentPageId = centerPage;
+    const dimensions = this.pageDimensions.get(centerPage);
+    if (dimensions) {
+      const containerWidth = Math.floor(
+        this.parentRef.clientWidth || window.innerWidth
+      );
+      const aspectRatio = dimensions.height / dimensions.width;
+      const newHeight = Math.floor(containerWidth * aspectRatio);
+
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RESIZE,
+          width: containerWidth,
+          height: newHeight,
+        });
+      } else {
+        this.canvas.width = containerWidth;
+        this.canvas.height = newHeight;
       }
     }
 
@@ -389,6 +405,8 @@ class MangaReaderRenderer {
     this.pageContainers.forEach((pageEl, pageId) => {
       const rect = pageEl.getBoundingClientRect();
       const isVisible = rect.top < viewportHeight && rect.bottom > 0;
+
+      console.log("checkVisiblePages", { pageId, isVisible });
       // Check if at least 20% of the page is visible
       //   const pageHeight = rect.height;
       //   const visibleThreshold = pageHeight * 0.2;
@@ -412,8 +430,17 @@ class MangaReaderRenderer {
 
   public dispose(): void {
     this.observer.disconnect();
+    // if (this.worker) {
+    //   this.worker.postMessage({
+    //     type: WorkerMessageType.CLEAR_CACHE,
+    //   });
+    //   this.worker.terminate();
+    //   this.worker = null;
+    // }
     if (this.worker) {
-      this.worker.terminate();
+      this.worker.postMessage({
+        type: WorkerMessageType.TERMINATE,
+      });
       this.worker = null;
     }
     this.loadedPages.clear();
