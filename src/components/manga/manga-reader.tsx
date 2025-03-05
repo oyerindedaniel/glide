@@ -45,7 +45,7 @@ export const MangaReader = memo(function MangaReader({
     <div
       id="manga-container"
       ref={containerRef}
-      className="w-full h-svh relative overflow-y-auto overflow-x-hidden"
+      className="w-full h-full relative overflow-y-auto overflow-x-hidden"
     />
   );
 });

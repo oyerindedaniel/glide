@@ -1,8 +1,10 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/renderer";
 
-const BUFFER_SIZE = 3;
+const BUFFER_SIZE = 3; // Number of pages to load at a time
+const PRELOAD_AHEAD = 2; // Number of pages to preload ahead
 const RENDER_QUALITY = 1.0;
+const DEFAULT_ASPECT_RATIO = 1.5; // Default for initial placeholder heights
 
 class MangaReaderRenderer {
   private canvas: HTMLCanvasElement;
@@ -11,41 +13,52 @@ class MangaReaderRenderer {
   private observer: IntersectionObserver;
   private pageContainers: Map<string, HTMLDivElement> = new Map();
   private loadedPages: Set<string> = new Set();
-  private currentPageId: string | null = null; // Track the current page ID
+  private loadingQueueInProgress: Set<string> = new Set();
+  private currentPageId: string | null = null;
   private visiblePages: Set<string> = new Set();
   private loadingQueue: string[] = [];
-  private parentRef: HTMLElement; // Store the parent element
-  private pageCanvases: Map<string, HTMLCanvasElement> = new Map();
+  private parentRef: HTMLElement;
   private pageDimensions: Map<string, { width: number; height: number }> =
-    new Map(); // Store image dimensions
+    new Map();
   private resizeHandler: () => void;
+  private scrollHandler: () => void;
 
   constructor(canvasContainer: HTMLElement = document.body) {
-    // Default to document.body if no parentRef is provided
     this.parentRef = canvasContainer;
 
+    // Initialize canvas
     this.canvas = document.createElement("canvas");
     this.canvas.className = "manga-reader-canvas";
-    this.canvas.style.boxSizing = "border-box";
+    this.canvas.style.position = "sticky";
+    this.canvas.style.top = "0";
+    this.canvas.style.left = "0";
+    this.canvas.style.zIndex = "1";
+    this.canvas.style.transform = "translate3d(0, 0, 0)";
+    this.canvas.style.willChange = "transform";
     this.parentRef.appendChild(this.canvas);
 
+    // Intersection Observer with tight rootMargin for center page detection
     this.observer = new IntersectionObserver(
       this.handleIntersection.bind(this),
       {
         root: null,
-        rootMargin: "200px",
-        threshold: 0.1,
+        rootMargin: "0px",
+        threshold: [0, 0.1, 0.5, 0.9, 1], // Multiple thresholds for precise center detection
       }
     );
 
+    // Initialize rendering backend
     if (window.OffscreenCanvas && window.Worker) {
       this.initWorker();
     } else {
       this.context = this.canvas.getContext("2d", { alpha: false });
     }
 
+    // Event handlers
     this.resizeHandler = this.handleResize.bind(this);
+    this.scrollHandler = this.handleScroll.bind(this);
     window.addEventListener("resize", this.resizeHandler);
+    this.parentRef.addEventListener("scroll", this.scrollHandler);
     this.handleResize();
   }
 
@@ -65,9 +78,12 @@ class MangaReaderRenderer {
         [offscreen]
       );
       this.worker.addEventListener("message", (event) => {
-        const { type, pageId } = event.data;
+        const { type, pageId, deletedPages } = event.data;
         if (type === WorkerMessageType.RENDERED && pageId) {
           this.onPageRendered(pageId);
+        } else if (type === WorkerMessageType.CACHE_PRUNED && deletedPages) {
+          console.log("Pruned pages:", deletedPages);
+          deletedPages.forEach((id: string) => this.loadedPages.delete(id));
         } else if (type === WorkerMessageType.ERROR) {
           console.error("Worker error:", event.data.error);
         }
@@ -75,6 +91,7 @@ class MangaReaderRenderer {
     } catch (err) {
       console.warn("Offscreen canvas worker initialization failed:", err);
       this.worker = null;
+      this.context = this.canvas.getContext("2d", { alpha: false });
     }
   }
 
@@ -84,7 +101,6 @@ class MangaReaderRenderer {
     );
     let newHeight = window.innerHeight;
 
-    // If there's a current page, adjust height based on its aspect ratio
     if (this.currentPageId) {
       const dimensions = this.pageDimensions.get(this.currentPageId);
       if (dimensions) {
@@ -103,7 +119,47 @@ class MangaReaderRenderer {
       this.canvas.width = containerWidth;
       this.canvas.height = newHeight;
     }
+
+    // Update all placeholder heights
+    this.pageContainers.forEach((pageEl, pageId) => {
+      const dimensions = this.pageDimensions.get(pageId);
+      if (dimensions) {
+        const aspectRatio = dimensions.height / dimensions.width;
+        const placeholderHeight = containerWidth * aspectRatio;
+        pageEl.style.height = `${Math.floor(placeholderHeight)}px`;
+      }
+    });
+
     this.renderVisiblePages();
+  }
+
+  private handleScroll(): void {
+    if (!this.currentPageId) return;
+    const placeholder = this.pageContainers.get(this.currentPageId);
+    if (!placeholder) return;
+
+    const rect = placeholder.getBoundingClientRect();
+    const offsetY = rect.top;
+
+    console.log({
+      canvasheight: this.canvas.height,
+      windowheight: window.innerHeight,
+      offsetY,
+    });
+
+    // Apply translation only if canvas is taller than viewport and scrolling has occurred
+    if (this.canvas.height > window.innerHeight && offsetY < 0) {
+      // Cap the translation at the hidden section’s size
+      const maxOffset = Math.max(
+        offsetY,
+        -(this.canvas.height - window.innerHeight)
+      );
+      console.log({ maxOffset });
+      this.canvas.style.transform = `translate3d(0, ${maxOffset}px, 0)`;
+    } else {
+      // No translation if canvas fits in viewport or hasn’t scrolled up
+      this.canvas.style.transform = `translate3d(0, 0, 0)`;
+    }
   }
 
   public render(
@@ -124,10 +180,13 @@ class MangaReaderRenderer {
     scrollContainer.style.top = "0";
     scrollContainer.style.left = "0";
     scrollContainer.style.width = "100%";
-    scrollContainer.style.height = "100%";
+    scrollContainer.style.height = "auto";
     scrollContainer.style.zIndex = "-1";
     scrollContainer.style.visibility = "hidden";
     this.parentRef.appendChild(scrollContainer);
+
+    const containerWidth = this.parentRef.clientWidth || window.innerWidth;
+    const defaultHeight = containerWidth * DEFAULT_ASPECT_RATIO;
 
     allPages.forEach(({ fileName, pageNumber, url, status }) => {
       const pageId = `${fileName}_${pageNumber}`;
@@ -137,7 +196,7 @@ class MangaReaderRenderer {
       pageEl.dataset.url = url || "";
       pageEl.dataset.status = status;
       pageEl.className = "manga-page-placeholder";
-      pageEl.style.height = "100svh";
+      pageEl.style.height = `${defaultHeight}px`;
       pageEl.style.width = "100%";
 
       scrollContainer.appendChild(pageEl);
@@ -145,22 +204,12 @@ class MangaReaderRenderer {
       this.observer.observe(pageEl);
     });
 
-    // this.currentPageId = allPages[0]?.fileName + "_" + allPages[0]?.pageNumber;
-
-    const initialPages = allPages
-      .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
-      .slice(0, BUFFER_SIZE);
-
-    initialPages.forEach(({ fileName, pageNumber, url }) => {
-      const pageId = `${fileName}_${pageNumber}`;
-      this.enqueuePageLoad(pageId, url);
-    });
-
+    this.preloadInitialPages(allPages);
     this.processLoadingQueue();
     this.checkVisiblePages();
   }
 
-  public updatePages(
+  private preloadInitialPages(
     allPages: Array<{
       fileName: string;
       pageNumber: number;
@@ -168,51 +217,16 @@ class MangaReaderRenderer {
       status: ProcessingStatus;
     }>
   ): void {
-    const scrollContainer = this.parentRef.querySelector(
-      ".manga-scroll-container"
-    );
-    if (!scrollContainer) return;
+    const initialPages = allPages
+      .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
+      .slice(0, BUFFER_SIZE + PRELOAD_AHEAD);
 
-    allPages.forEach(({ fileName, pageNumber, url, status }) => {
+    console.log({ initialPages });
+
+    initialPages.forEach(({ fileName, pageNumber, url }) => {
       const pageId = `${fileName}_${pageNumber}`;
-      const existingPageEl = this.pageContainers.get(pageId);
-
-      if (existingPageEl) {
-        const currentStatus = existingPageEl.dataset.status as ProcessingStatus;
-        const currentUrl = existingPageEl.dataset.url || "";
-        if (status !== currentStatus || url !== currentUrl) {
-          existingPageEl.dataset.status = status;
-          existingPageEl.dataset.url = url || "";
-          if (
-            status === ProcessingStatus.COMPLETED &&
-            url &&
-            !this.loadedPages.has(pageId)
-          ) {
-            this.enqueuePageLoad(pageId, url);
-          }
-        }
-      } else {
-        const pageEl = document.createElement("div");
-        pageEl.id = `page-${pageId}`;
-        pageEl.dataset.pageId = pageId;
-        pageEl.dataset.url = url || "";
-        pageEl.dataset.status = status;
-        pageEl.className = "manga-page-placeholder";
-        pageEl.style.height = "100svh";
-        pageEl.style.width = "100%";
-
-        scrollContainer.appendChild(pageEl);
-        this.pageContainers.set(pageId, pageEl);
-        this.observer.observe(pageEl);
-
-        if (status === ProcessingStatus.COMPLETED && url) {
-          this.enqueuePageLoad(pageId, url);
-        }
-      }
+      this.enqueuePageLoad(pageId, url);
     });
-
-    this.processLoadingQueue();
-    this.renderVisiblePages();
   }
 
   private handleIntersection(entries: IntersectionObserverEntry[]): void {
@@ -230,6 +244,7 @@ class MangaReaderRenderer {
         this.visiblePages.add(pageId);
         if (status === ProcessingStatus.COMPLETED && url) {
           this.enqueuePageLoad(pageId, url);
+          this.preloadNextPages(pageId);
         }
         needsRender = true;
       } else {
@@ -237,35 +252,62 @@ class MangaReaderRenderer {
       }
     });
 
-    console.log({ visiblePagesAddedFromObserver: this.visiblePages });
-
     if (needsRender) {
       this.processLoadingQueue();
       this.renderVisiblePages();
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private enqueuePageLoad(pageId: string, url: string): void {
-    if (this.loadedPages.has(pageId) || this.loadingQueue.includes(pageId))
+    if (
+      this.loadedPages.has(pageId) ||
+      this.loadingQueueInProgress.has(pageId) ||
+      this.loadingQueue.includes(pageId)
+    ) {
       return;
+    }
     this.loadingQueue.push(pageId);
+    this.loadingQueueInProgress.add(pageId);
+
     if (this.loadingQueue.length > BUFFER_SIZE * 2) {
+      console.log("Pruning loading queue");
       this.loadingQueue = this.loadingQueue.slice(-BUFFER_SIZE * 2);
+    }
+  }
+
+  private preloadNextPages(currentPageId: string): void {
+    const allPageIds = Array.from(this.pageContainers.keys());
+    const currentIndex = allPageIds.indexOf(currentPageId);
+    if (currentIndex === -1) return;
+
+    for (let i = 1; i <= PRELOAD_AHEAD; i++) {
+      const nextIndex = currentIndex + i;
+      if (nextIndex >= allPageIds.length) break;
+
+      const nextPageId = allPageIds[nextIndex];
+      const pageEl = this.pageContainers.get(nextPageId);
+      if (pageEl && !this.loadedPages.has(nextPageId)) {
+        const url = pageEl.dataset.url || "";
+        const status = pageEl.dataset.status as ProcessingStatus;
+        if (status === ProcessingStatus.COMPLETED && url) {
+          this.enqueuePageLoad(nextPageId, url);
+        }
+      }
     }
   }
 
   private async processLoadingQueue(): Promise<void> {
     const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
+    console.log("Processing loading queue:", toProcess);
     this.loadingQueue = this.loadingQueue.filter(
       (id) => !toProcess.includes(id)
     );
 
-    // console.log({ toProcess, loadingQueue: this.loadingQueue });
-
     for (const pageId of toProcess) {
+      if (this.loadedPages.has(pageId)) continue;
+
       const pageEl = this.pageContainers.get(pageId);
-      if (!pageEl || this.loadedPages.has(pageId)) continue;
+      if (!pageEl) continue;
       const url = pageEl.dataset.url;
       if (!url) continue;
       try {
@@ -277,32 +319,55 @@ class MangaReaderRenderer {
   }
 
   private async loadAndCacheImage(pageId: string, url: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        // Store image dimensions
-        this.pageDimensions.set(pageId, {
-          width: img.width,
-          height: img.height,
-        });
+    if (this.loadedPages.has(pageId)) {
+      console.log(`Page ${pageId} already loaded or in progress, skipping.`);
+      return;
+    }
 
-        if (this.worker) {
-          this.worker.postMessage({
-            type: WorkerMessageType.CACHE_IMAGE,
+    try {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const dimensions = { width: img.width, height: img.height };
+          this.pageDimensions.set(pageId, dimensions);
+
+          console.log({
             pageId,
-            url,
-            width: img.width,
-            height: img.height,
+            dimensions,
+            pagedimensions: this.pageDimensions,
           });
-        } else {
-          this.drawImageToCanvas(pageId, img);
-        }
-        // this.loadedPages.add(pageId);
-        resolve();
-      };
-      img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
-      img.src = url;
-    });
+
+          // Update placeholder height
+          const containerWidth =
+            this.parentRef.clientWidth || window.innerWidth;
+          const aspectRatio = dimensions.height / dimensions.width;
+          const placeholderHeight = containerWidth * aspectRatio;
+          const pageEl = this.pageContainers.get(pageId);
+          if (pageEl) {
+            pageEl.style.height = `${Math.floor(placeholderHeight)}px`;
+          }
+
+          if (this.worker) {
+            this.worker.postMessage({
+              type: WorkerMessageType.CACHE_IMAGE,
+              pageId,
+              url,
+              width: img.width,
+              height: img.height,
+            });
+          } else {
+            this.drawImageToCanvas(pageId, img);
+          }
+
+          this.loadedPages.add(pageId);
+          resolve();
+        };
+        img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+        img.src = url;
+      });
+    } finally {
+      this.loadingQueueInProgress.delete(pageId);
+    }
   }
 
   private drawImageToCanvas(pageId: string, img: HTMLImageElement): void {
@@ -313,8 +378,10 @@ class MangaReaderRenderer {
     const memCtx = memCanvas.getContext("2d");
     if (memCtx) {
       memCtx.drawImage(img, 0, 0);
-      this.pageCanvases.set(pageId, memCanvas);
-      this.onPageRendered(pageId);
+      this.loadedPages.add(pageId);
+      if (this.currentPageId === pageId) {
+        this.renderVisiblePages();
+      }
     }
   }
 
@@ -333,13 +400,11 @@ class MangaReaderRenderer {
 
     const centerPage = this.determineCurrentPage(visibleLoadedPages);
 
-    console.log("visibleLoadedPages", { visibleLoadedPages, centerPage });
-
-    if (centerPage === this.currentPageId) {
-      return;
-    }
+    if (centerPage === this.currentPageId) return;
 
     this.currentPageId = centerPage;
+    this.canvas.style.transform = `translate3d(0, 0, 0)`; // Reset translation
+
     const dimensions = this.pageDimensions.get(centerPage);
     if (dimensions) {
       const containerWidth = Math.floor(
@@ -349,6 +414,7 @@ class MangaReaderRenderer {
       const newHeight = Math.floor(containerWidth * aspectRatio);
 
       if (this.worker) {
+        console.log({ containerWidth, newHeight });
         this.worker.postMessage({
           type: WorkerMessageType.RESIZE,
           width: containerWidth,
@@ -367,33 +433,33 @@ class MangaReaderRenderer {
       });
     } else if (this.context) {
       this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      const memCanvas = this.pageCanvases.get(centerPage);
-      if (memCanvas) {
-        const scale = Math.min(
-          this.canvas.width / memCanvas.width,
-          this.canvas.height / memCanvas.height
-        );
-        const scaledWidth = memCanvas.width * scale;
-        const scaledHeight = memCanvas.height * scale;
-        const x = (this.canvas.width - scaledWidth) / 2;
-        const y = (this.canvas.height - scaledHeight) / 2;
-        this.context.drawImage(memCanvas, x, y, scaledWidth, scaledHeight);
-      }
+      const scale = Math.min(
+        this.canvas.width / dimensions!.width,
+        this.canvas.height / dimensions!.height
+      );
+      const scaledWidth = dimensions!.width * scale;
+      const scaledHeight = dimensions!.height * scale;
+      const x = (this.canvas.width - scaledWidth) / 2;
+      const y = (this.canvas.height - scaledHeight) / 2;
+      this.context.drawImage(this.canvas, x, y, scaledWidth, scaledHeight);
     }
   }
 
   private determineCurrentPage(visiblePageIds: string[]): string {
     if (visiblePageIds.length === 0) return "";
-    let bestVisibility = -1;
     let bestPageId = visiblePageIds[0];
+    let maxIntersectionRatio = -1;
+
     for (const pageId of visiblePageIds) {
       const el = this.pageContainers.get(pageId);
       if (!el) continue;
       const rect = el.getBoundingClientRect();
-      const visibleArea =
-        Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
-      if (visibleArea > bestVisibility) {
-        bestVisibility = visibleArea;
+      const viewportHeight = window.innerHeight;
+      const intersectionHeight =
+        Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
+      const intersectionRatio = intersectionHeight / rect.height;
+      if (intersectionRatio > maxIntersectionRatio) {
+        maxIntersectionRatio = intersectionRatio;
         bestPageId = pageId;
       }
     }
@@ -405,16 +471,6 @@ class MangaReaderRenderer {
     this.pageContainers.forEach((pageEl, pageId) => {
       const rect = pageEl.getBoundingClientRect();
       const isVisible = rect.top < viewportHeight && rect.bottom > 0;
-
-      console.log("checkVisiblePages", { pageId, isVisible });
-      // Check if at least 20% of the page is visible
-      //   const pageHeight = rect.height;
-      //   const visibleThreshold = pageHeight * 0.2;
-
-      //   const isVisible =
-      //     rect.top < viewportHeight - visibleThreshold &&
-      //     rect.bottom > visibleThreshold;
-
       if (isVisible) {
         this.visiblePages.add(pageId);
         const url = pageEl.dataset.url || "";
@@ -430,22 +486,12 @@ class MangaReaderRenderer {
 
   public dispose(): void {
     this.observer.disconnect();
-    // if (this.worker) {
-    //   this.worker.postMessage({
-    //     type: WorkerMessageType.CLEAR_CACHE,
-    //   });
-    //   this.worker.terminate();
-    //   this.worker = null;
-    // }
     if (this.worker) {
-      this.worker.postMessage({
-        type: WorkerMessageType.TERMINATE,
-      });
+      this.worker.postMessage({ type: WorkerMessageType.TERMINATE });
       this.worker = null;
     }
     this.loadedPages.clear();
     this.visiblePages.clear();
-    this.pageCanvases.clear();
     this.pageContainers.clear();
     this.pageDimensions.clear();
     this.loadingQueue = [];
@@ -464,6 +510,7 @@ class MangaReaderRenderer {
     });
 
     window.removeEventListener("resize", this.resizeHandler);
+    this.parentRef.removeEventListener("scroll", this.scrollHandler);
   }
 }
 

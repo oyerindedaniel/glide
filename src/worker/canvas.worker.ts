@@ -27,6 +27,7 @@ type WorkerMessage =
   | { type: WorkerMessageType.CLEAR_CACHE }
   | { type: WorkerMessageType.TERMINATE }
   | { type: WorkerMessageType.RENDERED; pageId: string }
+  | { type: WorkerMessageType.CACHE_PRUNED; deletedPages: string[] }
   | { type: WorkerMessageType.ERROR; error: string };
 
 let canvas: OffscreenCanvas | null = null;
@@ -37,31 +38,27 @@ let canvasHeight = 0;
 
 const pageCache = new Map<string, CachedPage>();
 
-/**
- * Prunes the cache to maintain a maximum size by removing the least recently accessed pages.
- */
 function pruneCache(): void {
   if (pageCache.size <= 10) return;
 
   const entries = Array.from(pageCache.entries());
-
-  // Sort by last accessed time (older entries come first)
   const sorted = entries.sort((a, b) => a[1].lastAccessed - b[1].lastAccessed);
-
-  // Keep the latest 5 entries + the current page
   const toRemove = sorted
     .filter(([key]) => key !== currentPageId)
     .slice(0, sorted.length - 5);
 
+  const deletedPages: string[] = [];
   toRemove.forEach(([key, page]) => {
     page.bitmap?.close();
     pageCache.delete(key);
+    deletedPages.push(key);
   });
+
+  if (deletedPages.length > 0) {
+    self.postMessage({ type: WorkerMessageType.CACHE_PRUNED, deletedPages });
+  }
 }
 
-/**
- * Clears the canvas by filling it with a white background.
- */
 function clearCanvas(): void {
   if (ctx && canvas) {
     ctx.fillStyle = "#ffffff";
@@ -69,11 +66,6 @@ function clearCanvas(): void {
   }
 }
 
-/**
- * Renders a cached page on the canvas, scaling it to fit while maintaining aspect ratio.
- *
- * @param {CachedPage} page - The page to render on the canvas.
- */
 function renderPage(page: CachedPage): void {
   if (!ctx || !canvas) return;
 
@@ -99,30 +91,23 @@ self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
     switch (type) {
       case WorkerMessageType.INIT: {
         const { canvas: initCanvas, width, height } = event.data;
-
         canvas = initCanvas;
         ctx = canvas.getContext("2d", { alpha: false });
-
         if (!ctx) throw new Error("Failed to get canvas context");
 
         canvasWidth = width || canvas.width;
         canvasHeight = height || canvas.height;
-
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
-
         clearCanvas();
         break;
       }
 
       case WorkerMessageType.RESIZE: {
         if (!canvas || !ctx) return;
-
         const { width, height } = event.data;
-
         canvasWidth = width;
         canvasHeight = height;
-
         canvas.width = canvasWidth;
         canvas.height = canvasHeight;
 
@@ -135,28 +120,21 @@ self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
 
       case WorkerMessageType.CACHE_IMAGE: {
         const { pageId, url, width, height } = event.data;
+        const response = await fetch(url);
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob);
 
-        try {
-          const response = await fetch(url);
-          const blob = await response.blob();
-          const bitmap = await createImageBitmap(blob);
+        pageCache.set(pageId, {
+          width,
+          height,
+          bitmap,
+          loaded: true,
+          lastAccessed: Date.now(),
+        });
+        self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
 
-          pageCache.set(pageId, {
-            width,
-            height,
-            bitmap,
-            loaded: true,
-            lastAccessed: Date.now(),
-          });
-          self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
-
-          if (currentPageId === pageId) renderPage(pageCache.get(pageId)!);
-
-          pruneCache();
-        } catch (error) {
-          console.error("Error caching image:", error);
-          throw error;
-        }
+        if (currentPageId === pageId) renderPage(pageCache.get(pageId)!);
+        pruneCache();
         break;
       }
 
@@ -169,7 +147,6 @@ self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
           renderPage(page);
           page.lastAccessed = Date.now();
           self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
-
           pruneCache();
         }
         break;
