@@ -1,5 +1,6 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/renderer";
+import { debounce } from "@/utils/app";
 
 const BUFFER_SIZE = 3; // Number of pages to load at a time
 const PRELOAD_AHEAD = 2; // Number of pages to preload ahead
@@ -22,6 +23,10 @@ class MangaReaderRenderer {
     new Map();
   private resizeHandler: () => void;
   private scrollHandler: () => void;
+  private transitionTimeout: ReturnType<typeof setTimeout> | null = null;
+  private rfa: ReturnType<typeof requestAnimationFrame> | null = null;
+  private lastTransition: string | null = null;
+  private lastScrollTop: number = 0;
 
   constructor(canvasContainer: HTMLElement = document.body) {
     this.parentRef = canvasContainer;
@@ -29,6 +34,7 @@ class MangaReaderRenderer {
     // Initialize canvas
     this.canvas = document.createElement("canvas");
     this.canvas.className = "manga-reader-canvas";
+    this.canvas.style.boxSizing = "border-box";
     this.canvas.style.position = "sticky";
     this.canvas.style.top = "0";
     this.canvas.style.left = "0";
@@ -39,11 +45,11 @@ class MangaReaderRenderer {
 
     // Intersection Observer with tight rootMargin for center page detection
     this.observer = new IntersectionObserver(
-      this.handleIntersection.bind(this),
+      this.debouncedHandleIntersection.bind(this),
       {
         root: null,
         rootMargin: "0px",
-        threshold: [0, 0.1, 0.5, 0.9, 1], // Multiple thresholds for precise center detection
+        threshold: [0, 0.5, 1],
       }
     );
 
@@ -58,7 +64,9 @@ class MangaReaderRenderer {
     this.resizeHandler = this.handleResize.bind(this);
     this.scrollHandler = this.handleScroll.bind(this);
     window.addEventListener("resize", this.resizeHandler);
-    this.parentRef.addEventListener("scroll", this.scrollHandler);
+    this.parentRef.addEventListener("scroll", this.scrollHandler, {
+      passive: true,
+    });
     this.handleResize();
   }
 
@@ -95,6 +103,14 @@ class MangaReaderRenderer {
     }
   }
 
+  private getHeightFromAspectRatio(
+    containerWidth: number,
+    dimensions: { width: number; height: number }
+  ): number {
+    const aspectRatio = dimensions.height / dimensions.width;
+    return Math.floor(containerWidth * aspectRatio);
+  }
+
   private handleResize(): void {
     const containerWidth = Math.floor(
       this.parentRef.clientWidth || window.innerWidth
@@ -104,8 +120,7 @@ class MangaReaderRenderer {
     if (this.currentPageId) {
       const dimensions = this.pageDimensions.get(this.currentPageId);
       if (dimensions) {
-        const aspectRatio = dimensions.height / dimensions.width;
-        newHeight = Math.floor(containerWidth * aspectRatio);
+        newHeight = this.getHeightFromAspectRatio(containerWidth, dimensions);
       }
     }
 
@@ -124,9 +139,11 @@ class MangaReaderRenderer {
     this.pageContainers.forEach((pageEl, pageId) => {
       const dimensions = this.pageDimensions.get(pageId);
       if (dimensions) {
-        const aspectRatio = dimensions.height / dimensions.width;
-        const placeholderHeight = containerWidth * aspectRatio;
-        pageEl.style.height = `${Math.floor(placeholderHeight)}px`;
+        const placeholderHeight = this.getHeightFromAspectRatio(
+          containerWidth,
+          dimensions
+        );
+        pageEl.style.height = `${placeholderHeight}px`;
       }
     });
 
@@ -134,32 +151,93 @@ class MangaReaderRenderer {
   }
 
   private handleScroll(): void {
-    if (!this.currentPageId) return;
-    const placeholder = this.pageContainers.get(this.currentPageId);
-    if (!placeholder) return;
+    if (this.rfa) cancelAnimationFrame(this.rfa);
+    this.rfa = requestAnimationFrame(() => {
+      if (!this.currentPageId) return;
+      const placeholder = this.pageContainers.get(this.currentPageId);
+      if (!placeholder) return;
 
-    const rect = placeholder.getBoundingClientRect();
-    const offsetY = rect.top;
+      const rect = placeholder.getBoundingClientRect();
+      const offsetY = rect.top;
+      const canvasHeight = this.canvas.height;
+      const viewportHeight = window.innerHeight;
+      const maxOffset =
+        canvasHeight > viewportHeight ? -(canvasHeight - viewportHeight) : 0;
 
-    console.log({
-      canvasheight: this.canvas.height,
-      windowheight: window.innerHeight,
-      offsetY,
+      const currentScrollTop = this.parentRef.scrollTop;
+      const scrollDirection =
+        currentScrollTop > this.lastScrollTop ? "down" : "up";
+      this.lastScrollTop = currentScrollTop;
+
+      let translateY = 0;
+      if (canvasHeight > viewportHeight) {
+        if (offsetY < 0) {
+          // Scrolling down within the current page
+          translateY = Math.max(offsetY, maxOffset);
+          if (translateY <= maxOffset && scrollDirection === "down") {
+            this.handleOffsetCapping("downward");
+          }
+        } else if (offsetY > 0) {
+          // Scrolling up within the current page
+          translateY = Math.min(offsetY, 0);
+        }
+        console.log({ offsetY });
+        // Trigger smooth scrolling to previous page when scrolling up and offsetY <= 0
+        if (scrollDirection === "up" && Math.floor(offsetY) === 0) {
+          this.handleOffsetCapping("upward");
+        }
+      }
+
+      this.canvas.style.transition = "";
+      this.canvas.style.transform = `translate3d(0, ${translateY}px, 0)`;
     });
+  }
 
-    // Apply translation only if canvas is taller than viewport and scrolling has occurred
-    if (this.canvas.height > window.innerHeight && offsetY < 0) {
-      // Cap the translation at the hidden section’s size
-      const maxOffset = Math.max(
-        offsetY,
-        -(this.canvas.height - window.innerHeight)
-      );
-      console.log({ maxOffset });
-      this.canvas.style.transform = `translate3d(0, ${maxOffset}px, 0)`;
-    } else {
-      // No translation if canvas fits in viewport or hasn’t scrolled up
-      this.canvas.style.transform = `translate3d(0, 0, 0)`;
+  private handleOffsetCapping(direction: "upward" | "downward"): void {
+    if (!this.currentPageId) return;
+
+    const pageIds = Array.from(this.pageContainers.keys());
+    const currentIndex = pageIds.indexOf(this.currentPageId);
+    if (currentIndex === -1) return;
+
+    let targetId: string | null = null;
+    if (direction === "upward" && currentIndex > 0) {
+      targetId = pageIds[currentIndex - 1]; // Previous page
+    } else if (direction === "downward" && currentIndex < pageIds.length - 1) {
+      targetId = pageIds[currentIndex + 1]; // Next page
     }
+
+    if (!targetId) return;
+
+    const transitionKey = `${this.currentPageId}_to_${targetId}_${direction}`;
+
+    if (this.lastTransition === transitionKey) {
+      return;
+    }
+
+    this.lastTransition = transitionKey;
+
+    const targetPlaceholder = this.pageContainers.get(targetId);
+    if (!targetPlaceholder) return;
+
+    const viewportHeight = window.innerHeight;
+    const targetRect = targetPlaceholder.getBoundingClientRect();
+    const targetHeight = targetRect.height;
+    const targetTop = targetPlaceholder.offsetTop;
+
+    let scrollTarget: number;
+    if (direction === "upward") {
+      scrollTarget = targetTop + targetHeight - viewportHeight; // Bottom of previous page
+    } else {
+      scrollTarget = targetTop; // Top of next page
+    }
+
+    console.log({ targetId, scrollTarget, direction });
+
+    this.parentRef.scrollTo({
+      top: scrollTarget,
+      behavior: "smooth",
+    });
   }
 
   public render(
@@ -229,6 +307,11 @@ class MangaReaderRenderer {
     });
   }
 
+  private debouncedHandleIntersection = debounce(
+    this.handleIntersection.bind(this),
+    100
+  );
+
   private handleIntersection(entries: IntersectionObserverEntry[]): void {
     let needsRender = false;
 
@@ -242,6 +325,7 @@ class MangaReaderRenderer {
 
       if (entry.isIntersecting) {
         this.visiblePages.add(pageId);
+        console.log("pageId", pageId, entry.isIntersecting);
         if (status === ProcessingStatus.COMPLETED && url) {
           this.enqueuePageLoad(pageId, url);
           this.preloadNextPages(pageId);
@@ -264,6 +348,7 @@ class MangaReaderRenderer {
       this.loadingQueueInProgress.has(pageId) ||
       this.loadingQueue.includes(pageId)
     ) {
+      console.log(`Page ${pageId} already loaded or in progress, skipping.`);
       return;
     }
     this.loadingQueue.push(pageId);
@@ -296,34 +381,68 @@ class MangaReaderRenderer {
     }
   }
 
+  // private async processLoadingQueue(): Promise<void> {
+  //   const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
+  //   console.log("Processing loading queue:", toProcess);
+  //   this.loadingQueue = this.loadingQueue.filter(
+  //     (id) => !toProcess.includes(id)
+  //   );
+
+  //   for (const pageId of toProcess) {
+  //     if (this.loadedPages.has(pageId)) continue;
+
+  //     const pageEl = this.pageContainers.get(pageId);
+  //     if (!pageEl) continue;
+  //     const url = pageEl.dataset.url;
+  //     if (!url) continue;
+  //     try {
+  //       await this.loadAndCacheImage(pageId, url);
+  //     } catch (err) {
+  //       console.error(`Failed to load image for page ${pageId}:`, err);
+  //     }
+  //   }
+  // }
+
   private async processLoadingQueue(): Promise<void> {
     const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
     console.log("Processing loading queue:", toProcess);
+
     this.loadingQueue = this.loadingQueue.filter(
       (id) => !toProcess.includes(id)
     );
 
+    const validPages: { pageId: string; url: string }[] = [];
+
     for (const pageId of toProcess) {
-      if (this.loadedPages.has(pageId)) continue;
+      if (this.loadedPages.has(pageId)) {
+        continue;
+      }
 
       const pageEl = this.pageContainers.get(pageId);
-      if (!pageEl) continue;
-      const url = pageEl.dataset.url;
-      if (!url) continue;
-      try {
-        await this.loadAndCacheImage(pageId, url);
-      } catch (err) {
-        console.error(`Failed to load image for page ${pageId}:`, err);
+      if (!pageEl) {
+        continue;
       }
+
+      const url = pageEl.dataset.url;
+      if (!url) {
+        continue;
+      }
+
+      validPages.push({ pageId, url });
     }
+
+    await Promise.all(
+      validPages.map(async ({ pageId, url }) => {
+        try {
+          await this.loadAndCacheImage(pageId, url);
+        } catch (err) {
+          console.error(`Failed to load image for page ${pageId}:`, err);
+        }
+      })
+    );
   }
 
   private async loadAndCacheImage(pageId: string, url: string): Promise<void> {
-    if (this.loadedPages.has(pageId)) {
-      console.log(`Page ${pageId} already loaded or in progress, skipping.`);
-      return;
-    }
-
     try {
       return new Promise((resolve, reject) => {
         const img = new Image();
@@ -331,20 +450,16 @@ class MangaReaderRenderer {
           const dimensions = { width: img.width, height: img.height };
           this.pageDimensions.set(pageId, dimensions);
 
-          console.log({
-            pageId,
-            dimensions,
-            pagedimensions: this.pageDimensions,
-          });
-
           // Update placeholder height
           const containerWidth =
             this.parentRef.clientWidth || window.innerWidth;
-          const aspectRatio = dimensions.height / dimensions.width;
-          const placeholderHeight = containerWidth * aspectRatio;
+          const placeholderHeight = this.getHeightFromAspectRatio(
+            containerWidth,
+            dimensions
+          );
           const pageEl = this.pageContainers.get(pageId);
           if (pageEl) {
-            pageEl.style.height = `${Math.floor(placeholderHeight)}px`;
+            pageEl.style.height = `${placeholderHeight}px`;
           }
 
           if (this.worker) {
@@ -399,22 +514,54 @@ class MangaReaderRenderer {
     if (visibleLoadedPages.length === 0) return;
 
     const centerPage = this.determineCurrentPage(visibleLoadedPages);
-
     if (centerPage === this.currentPageId) return;
 
+    // Determine scroll direction
+    const allPageIds = Array.from(this.pageContainers.keys());
+    const oldIndex = this.currentPageId
+      ? allPageIds.indexOf(this.currentPageId)
+      : -1;
+    const newIndex = allPageIds.indexOf(centerPage);
+
+    let initialTranslateY = 0;
+    if (oldIndex !== -1 && newIndex < oldIndex) {
+      // Scrolling up to previous page
+      const dimensions = this.pageDimensions.get(centerPage);
+      if (dimensions) {
+        const containerWidth = Math.floor(
+          this.parentRef.clientWidth || window.innerWidth
+        );
+        const canvasHeight = this.getHeightFromAspectRatio(
+          containerWidth,
+          dimensions
+        );
+        const viewportHeight = window.innerHeight;
+        if (canvasHeight > viewportHeight) {
+          initialTranslateY = -(canvasHeight - viewportHeight); // Show bottom
+        }
+      }
+    } // Else scrolling down, keep initialTranslateY = 0 to show top
+
     this.currentPageId = centerPage;
-    this.canvas.style.transform = `translate3d(0, 0, 0)`; // Reset translation
+
+    this.canvas.style.transition = "transform 0.6s ease";
+    this.canvas.style.transform = `translate3d(0, ${initialTranslateY}px, 0)`;
+
+    if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
+    this.transitionTimeout = setTimeout(() => {
+      this.canvas.style.transition = "";
+    }, 600);
 
     const dimensions = this.pageDimensions.get(centerPage);
     if (dimensions) {
       const containerWidth = Math.floor(
         this.parentRef.clientWidth || window.innerWidth
       );
-      const aspectRatio = dimensions.height / dimensions.width;
-      const newHeight = Math.floor(containerWidth * aspectRatio);
-
+      const newHeight = this.getHeightFromAspectRatio(
+        containerWidth,
+        dimensions
+      );
       if (this.worker) {
-        console.log({ containerWidth, newHeight });
         this.worker.postMessage({
           type: WorkerMessageType.RESIZE,
           width: containerWidth,
@@ -448,18 +595,22 @@ class MangaReaderRenderer {
   private determineCurrentPage(visiblePageIds: string[]): string {
     if (visiblePageIds.length === 0) return "";
     let bestPageId = visiblePageIds[0];
-    let maxIntersectionRatio = -1;
+    let maxVisibleHeight = -Infinity;
 
     for (const pageId of visiblePageIds) {
       const el = this.pageContainers.get(pageId);
       if (!el) continue;
       const rect = el.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-      const intersectionHeight =
-        Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
-      const intersectionRatio = intersectionHeight / rect.height;
-      if (intersectionRatio > maxIntersectionRatio) {
-        maxIntersectionRatio = intersectionRatio;
+
+      // Calculate how much of the placeholder is visible in the viewport
+      const viewportTop = 0;
+      const viewportBottom = window.innerHeight;
+      const visibleTop = Math.max(rect.top, viewportTop);
+      const visibleBottom = Math.min(rect.bottom, viewportBottom);
+      const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+
+      if (visibleHeight > maxVisibleHeight) {
+        maxVisibleHeight = visibleHeight;
         bestPageId = pageId;
       }
     }
@@ -486,6 +637,7 @@ class MangaReaderRenderer {
 
   public dispose(): void {
     this.observer.disconnect();
+    if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
     if (this.worker) {
       this.worker.postMessage({ type: WorkerMessageType.TERMINATE });
       this.worker = null;
