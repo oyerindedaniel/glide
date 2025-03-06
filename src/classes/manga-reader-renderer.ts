@@ -169,22 +169,25 @@ class MangaReaderRenderer {
         currentScrollTop > this.lastScrollTop ? "down" : "up";
       this.lastScrollTop = currentScrollTop;
 
+      const FLOATING_POINT = 2; // due to floating-point precision or rapid scrolling
+
       let translateY = 0;
       if (canvasHeight > viewportHeight) {
         if (offsetY < 0) {
           // Scrolling down within the current page
           translateY = Math.max(offsetY, maxOffset);
-          if (translateY <= maxOffset && scrollDirection === "down") {
+          if (
+            translateY - FLOATING_POINT <= maxOffset &&
+            scrollDirection === "down"
+          ) {
             this.handleOffsetCapping("downward");
           }
         } else if (offsetY > 0) {
           // Scrolling up within the current page
           translateY = Math.min(offsetY, 0);
-        }
-        console.log({ offsetY });
-        // Trigger smooth scrolling to previous page when scrolling up and offsetY <= 0
-        if (scrollDirection === "up" && Math.floor(offsetY) === 0) {
-          this.handleOffsetCapping("upward");
+          if (translateY - FLOATING_POINT <= 0 && scrollDirection === "up") {
+            this.handleOffsetCapping("upward");
+          }
         }
       }
 
@@ -206,6 +209,8 @@ class MangaReaderRenderer {
     } else if (direction === "downward" && currentIndex < pageIds.length - 1) {
       targetId = pageIds[currentIndex + 1]; // Next page
     }
+
+    console.log({ targetId });
 
     if (!targetId) return;
 
