@@ -279,6 +279,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
         fileMetadata: newFileMetadata,
       };
     });
+
+    get().updateAllPages();
   },
 
   reorderPages: (fileName: string, newPageOrder: number[]) => {
@@ -296,6 +298,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
 
       return { processedFiles: newProcessedFiles };
     });
+
+    get().updateAllPages();
   },
 
   removeFile: (fileName: string) => {
@@ -327,6 +331,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     });
     get().computeStatusCounts();
     get().checkAllFilesProcessed();
+    get().updateAllPages();
   },
 
   removePage: (fileName: string, pageNumber: number) => {
@@ -345,6 +350,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       return { processedFiles: newProcessedFiles };
     });
     get().checkAllFilesProcessed();
+    get().updateAllPages();
   },
 }));
 

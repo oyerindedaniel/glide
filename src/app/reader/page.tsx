@@ -13,7 +13,7 @@ export default function Reader() {
 
   return (
     <div className="h-svh w-full">
-      <div className="md:w-[75%] bg-[#0B0B0B] ease-in-out h-full overflow-hidden w-full transition-[width] duration-800 fixed top-0 left-0 z-10">
+      <div className="md:w-[75%] bg-[#0B0B0B] ease-in-out h-full w-full overflow-x-hidden overflow-y-auto transition-[width] duration-800 fixed top-0 left-0 z-10">
         {allPages.length === 0 ? (
           <MangaEmptyState />
         ) : (

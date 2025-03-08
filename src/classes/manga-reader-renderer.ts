@@ -13,6 +13,8 @@ class MangaReaderRenderer {
   private worker: Worker | null = null;
   private observer: IntersectionObserver;
   private pageContainers: Map<string, HTMLDivElement> = new Map();
+  private sortedPageIds: string[] = [];
+  private isSortedListDirty: boolean = true;
   private loadedPages: Set<string> = new Set();
   private loadingQueueInProgress: Set<string> = new Set();
   private currentPageId: string | null = null;
@@ -27,6 +29,12 @@ class MangaReaderRenderer {
   private rfa: ReturnType<typeof requestAnimationFrame> | null = null;
   private lastTransition: string | null = null;
   private lastScrollTop: number = 0;
+  private imageCache: Map<string, HTMLImageElement> = new Map();
+  private lastCanvas: { width: number; height: number } = {
+    width: 0,
+    height: 0,
+  };
+  private throttledScrollHandler: () => void;
 
   constructor(canvasContainer: HTMLElement = document.body) {
     this.parentRef = canvasContainer;
@@ -59,6 +67,14 @@ class MangaReaderRenderer {
     } else {
       this.context = this.canvas.getContext("2d", { alpha: false });
     }
+
+    this.throttledScrollHandler = this.throttle(() => {
+      const newCurrentPage = this.determineCurrentPage();
+      if (newCurrentPage !== this.currentPageId && newCurrentPage) {
+        console.log("New current page:", newCurrentPage);
+        this.renderVisiblePage(newCurrentPage);
+      }
+    }, 100);
 
     // Event handlers
     this.resizeHandler = this.handleResize.bind(this);
@@ -124,15 +140,22 @@ class MangaReaderRenderer {
       }
     }
 
-    if (this.worker) {
-      this.worker.postMessage({
-        type: WorkerMessageType.RESIZE,
-        width: containerWidth,
-        height: newHeight,
-      });
-    } else {
-      this.canvas.width = containerWidth;
-      this.canvas.height = newHeight;
+    if (
+      this.lastCanvas.width !== containerWidth ||
+      this.lastCanvas.height !== newHeight
+    ) {
+      this.lastCanvas.width = containerWidth;
+      this.lastCanvas.height = newHeight;
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RESIZE,
+          width: containerWidth,
+          height: newHeight,
+        });
+      } else {
+        this.canvas.width = containerWidth;
+        this.canvas.height = newHeight;
+      }
     }
 
     // Update all placeholder heights
@@ -147,12 +170,15 @@ class MangaReaderRenderer {
       }
     });
 
-    this.renderVisiblePages();
+    this.isSortedListDirty = true;
+    this.throttledScrollHandler();
   }
 
   private handleScroll(): void {
     if (this.rfa) cancelAnimationFrame(this.rfa);
     this.rfa = requestAnimationFrame(() => {
+      this.throttledScrollHandler();
+
       if (!this.currentPageId) return;
       const placeholder = this.pageContainers.get(this.currentPageId);
       if (!placeholder) return;
@@ -209,8 +235,6 @@ class MangaReaderRenderer {
     } else if (direction === "downward" && currentIndex < pageIds.length - 1) {
       targetId = pageIds[currentIndex + 1]; // Next page
     }
-
-    console.log({ targetId });
 
     if (!targetId) return;
 
@@ -287,6 +311,7 @@ class MangaReaderRenderer {
       this.observer.observe(pageEl);
     });
 
+    this.isSortedListDirty = true;
     this.preloadInitialPages(allPages);
     this.processLoadingQueue();
     this.checkVisiblePages();
@@ -318,7 +343,7 @@ class MangaReaderRenderer {
   );
 
   private handleIntersection(entries: IntersectionObserverEntry[]): void {
-    let needsRender = false;
+    let shouldProcessQueue = false;
 
     entries.forEach((entry) => {
       const pageEl = entry.target as HTMLDivElement;
@@ -329,30 +354,38 @@ class MangaReaderRenderer {
       if (!pageId) return;
 
       if (entry.isIntersecting) {
-        this.visiblePages.add(pageId);
-        console.log("pageId", pageId, entry.isIntersecting);
-        if (status === ProcessingStatus.COMPLETED && url) {
-          this.enqueuePageLoad(pageId, url);
-          this.preloadNextPages(pageId);
+        if (!this.visiblePages.has(pageId)) {
+          this.visiblePages.add(pageId);
+          if (
+            this.needsLoad(pageId) &&
+            status === ProcessingStatus.COMPLETED &&
+            url
+          ) {
+            this.enqueuePageLoad(pageId, url);
+            this.preloadNextPages(pageId);
+            shouldProcessQueue = true;
+          }
         }
-        needsRender = true;
       } else {
         this.visiblePages.delete(pageId);
       }
     });
 
-    if (needsRender) {
+    if (shouldProcessQueue) {
       this.processLoadingQueue();
-      this.renderVisiblePages();
     }
   }
 
-  private enqueuePageLoad(pageId: string, url: string): void {
-    if (
+  private needsLoad(pageId: string): boolean {
+    return !(
       this.loadedPages.has(pageId) ||
       this.loadingQueueInProgress.has(pageId) ||
       this.loadingQueue.includes(pageId)
-    ) {
+    );
+  }
+
+  private enqueuePageLoad(pageId: string, url: string): void {
+    if (!this.needsLoad(pageId)) {
       console.log(`Page ${pageId} already loaded or in progress, skipping.`);
       return;
     }
@@ -476,9 +509,10 @@ class MangaReaderRenderer {
               height: img.height,
             });
           } else {
-            this.drawImageToCanvas(pageId, img);
+            this.imageCache.set(pageId, img);
+            this.pruneImageCache();
           }
-
+          this.isSortedListDirty = true;
           this.loadedPages.add(pageId);
           resolve();
         };
@@ -490,48 +524,36 @@ class MangaReaderRenderer {
     }
   }
 
-  private drawImageToCanvas(pageId: string, img: HTMLImageElement): void {
-    if (!this.context) return;
-    const memCanvas = document.createElement("canvas");
-    memCanvas.width = img.width;
-    memCanvas.height = img.height;
-    const memCtx = memCanvas.getContext("2d");
-    if (memCtx) {
-      memCtx.drawImage(img, 0, 0);
-      this.loadedPages.add(pageId);
-      if (this.currentPageId === pageId) {
-        this.renderVisiblePages();
+  private onPageRendered(pageId: string): void {
+    this.loadedPages.add(pageId);
+    if (this.visiblePages.has(pageId)) {
+      const currentPage = this.determineCurrentPage();
+
+      if (currentPage === pageId) {
+        this.renderVisiblePage(pageId);
       }
     }
   }
 
-  private onPageRendered(pageId: string): void {
-    this.loadedPages.add(pageId);
-    if (this.visiblePages.has(pageId)) {
-      this.renderVisiblePages();
-    }
-  }
-
-  private renderVisiblePages(): void {
+  private renderVisiblePage(currentPage: string): void {
     const visibleLoadedPages = Array.from(this.visiblePages).filter((pageId) =>
       this.loadedPages.has(pageId)
     );
     if (visibleLoadedPages.length === 0) return;
 
-    const centerPage = this.determineCurrentPage(visibleLoadedPages);
-    if (centerPage === this.currentPageId) return;
+    if (currentPage === this.currentPageId) return;
 
     // Determine scroll direction
     const allPageIds = Array.from(this.pageContainers.keys());
     const oldIndex = this.currentPageId
       ? allPageIds.indexOf(this.currentPageId)
       : -1;
-    const newIndex = allPageIds.indexOf(centerPage);
+    const newIndex = allPageIds.indexOf(currentPage);
 
     let initialTranslateY = 0;
     if (oldIndex !== -1 && newIndex < oldIndex) {
       // Scrolling up to previous page
-      const dimensions = this.pageDimensions.get(centerPage);
+      const dimensions = this.pageDimensions.get(currentPage);
       if (dimensions) {
         const containerWidth = Math.floor(
           this.parentRef.clientWidth || window.innerWidth
@@ -547,7 +569,7 @@ class MangaReaderRenderer {
       }
     } // Else scrolling down, keep initialTranslateY = 0 to show top
 
-    this.currentPageId = centerPage;
+    this.currentPageId = currentPage;
 
     this.canvas.style.transition = "transform 0.6s ease";
     this.canvas.style.transform = `translate3d(0, ${initialTranslateY}px, 0)`;
@@ -557,7 +579,7 @@ class MangaReaderRenderer {
       this.canvas.style.transition = "";
     }, 600);
 
-    const dimensions = this.pageDimensions.get(centerPage);
+    const dimensions = this.pageDimensions.get(currentPage);
     if (dimensions) {
       const containerWidth = Math.floor(
         this.parentRef.clientWidth || window.innerWidth
@@ -566,25 +588,32 @@ class MangaReaderRenderer {
         containerWidth,
         dimensions
       );
-      if (this.worker) {
-        this.worker.postMessage({
-          type: WorkerMessageType.RESIZE,
-          width: containerWidth,
-          height: newHeight,
-        });
-      } else {
-        this.canvas.width = containerWidth;
-        this.canvas.height = newHeight;
+
+      if (
+        this.lastCanvas.width !== containerWidth ||
+        this.lastCanvas.height !== newHeight
+      ) {
+        this.lastCanvas.width = containerWidth;
+        this.lastCanvas.height = newHeight;
+        if (this.worker) {
+          this.worker.postMessage({
+            type: WorkerMessageType.RESIZE,
+            width: containerWidth,
+            height: newHeight,
+          });
+        } else {
+          this.canvas.width = containerWidth;
+          this.canvas.height = newHeight;
+        }
       }
     }
 
     if (this.worker) {
       this.worker.postMessage({
         type: WorkerMessageType.RENDER_PAGE,
-        pageId: centerPage,
+        pageId: currentPage,
       });
     } else if (this.context) {
-      this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
       const scale = Math.min(
         this.canvas.width / dimensions!.width,
         this.canvas.height / dimensions!.height
@@ -593,51 +622,132 @@ class MangaReaderRenderer {
       const scaledHeight = dimensions!.height * scale;
       const x = (this.canvas.width - scaledWidth) / 2;
       const y = (this.canvas.height - scaledHeight) / 2;
-      this.context.drawImage(this.canvas, x, y, scaledWidth, scaledHeight);
+
+      const img = this.imageCache.get(currentPage) || new Image();
+      if (!this.imageCache.has(currentPage)) {
+        img.src = this.pageContainers.get(currentPage)?.dataset.url || "";
+        img.onload = () => {
+          this.imageCache.set(currentPage, img);
+          this.context?.drawImage(img, x, y, scaledWidth, scaledHeight);
+        };
+        img.onerror = () => {
+          console.error(`Failed to load image for page ${currentPage}`);
+        };
+      } else {
+        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.context.drawImage(img, x, y, scaledWidth, scaledHeight);
+      }
     }
   }
 
-  private determineCurrentPage(visiblePageIds: string[]): string {
-    if (visiblePageIds.length === 0) return "";
-    let bestPageId = visiblePageIds[0];
-    let maxVisibleHeight = -Infinity;
+  /**
+   * Updates the sorted list of page IDs based on their offsetTop values.
+   */
+  private updateSortedPageIds(): void {
+    this.sortedPageIds = Array.from(this.pageContainers.keys()).sort((a, b) => {
+      const elA = this.pageContainers.get(a)!;
+      const elB = this.pageContainers.get(b)!;
+      return elA.offsetTop - elB.offsetTop;
+    });
+    this.isSortedListDirty = false;
+  }
 
-    for (const pageId of visiblePageIds) {
-      const el = this.pageContainers.get(pageId);
-      if (!el) continue;
-      const rect = el.getBoundingClientRect();
+  /**
+   * Determines the current page based on the scroll position using binary search.
+   * @returns The ID of the current page.
+   */
+  private determineCurrentPage(): string {
+    // Update the sorted list if it's dirty
+    if (this.isSortedListDirty) {
+      this.updateSortedPageIds();
+    }
 
-      // Calculate how much of the placeholder is visible in the viewport
-      const viewportTop = 0;
-      const viewportBottom = window.innerHeight;
-      const visibleTop = Math.max(rect.top, viewportTop);
-      const visibleBottom = Math.min(rect.bottom, viewportBottom);
-      const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+    const scrollTop = this.parentRef.scrollTop;
 
-      if (visibleHeight > maxVisibleHeight) {
-        maxVisibleHeight = visibleHeight;
-        bestPageId = pageId;
+    let left = 0;
+    let right = this.sortedPageIds.length - 1;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      const pageId = this.sortedPageIds[mid];
+      const el = this.pageContainers.get(pageId)!;
+      const elTop = el.offsetTop;
+      const elBottom = elTop + el.offsetHeight;
+
+      // Check if the scroll position is within this page's bounds
+      if (elTop <= scrollTop && elBottom > scrollTop) {
+        return pageId;
+      }
+      // If the page starts after the scroll position, look in the left half
+      else if (elTop > scrollTop) {
+        right = mid - 1;
+      }
+      // If the page ends before the scroll position, look in the right half
+      else {
+        left = mid + 1;
       }
     }
-    return bestPageId;
+
+    // Handle edge cases
+    if (left === 0) {
+      return this.sortedPageIds[0]; // Scroll is before the first page
+    } else if (left >= this.sortedPageIds.length) {
+      return this.sortedPageIds[this.sortedPageIds.length - 1]; // Scroll is after the last page
+    } else {
+      // Scroll is between pages; pick the closest one
+      const prevPage = this.sortedPageIds[left - 1];
+      const nextPage = this.sortedPageIds[left];
+      const prevEl = this.pageContainers.get(prevPage)!;
+      const prevBottom = prevEl.offsetTop + prevEl.offsetHeight;
+      return scrollTop < prevBottom ? prevPage : nextPage;
+    }
   }
 
   private checkVisiblePages(): void {
     const viewportHeight = window.innerHeight;
+    let shouldProcessQueue = false;
+
     this.pageContainers.forEach((pageEl, pageId) => {
       const rect = pageEl.getBoundingClientRect();
       const isVisible = rect.top < viewportHeight && rect.bottom > 0;
       if (isVisible) {
         this.visiblePages.add(pageId);
-        const url = pageEl.dataset.url || "";
-        const status = pageEl.dataset.status as ProcessingStatus;
-        if (status === ProcessingStatus.COMPLETED && url) {
-          this.enqueuePageLoad(pageId, url);
+        if (this.needsLoad(pageId)) {
+          const url = pageEl.dataset.url || "";
+          const status = pageEl.dataset.status as ProcessingStatus;
+          if (status === ProcessingStatus.COMPLETED && url) {
+            this.enqueuePageLoad(pageId, url);
+            shouldProcessQueue = true;
+          }
         }
       }
     });
-    this.processLoadingQueue();
-    this.renderVisiblePages();
+
+    if (shouldProcessQueue) {
+      this.processLoadingQueue();
+    }
+    this.throttledScrollHandler();
+  }
+
+  private pruneImageCache(): void {
+    if (this.imageCache.size <= 10) return;
+    const toRemove = Array.from(this.imageCache.keys()).slice(
+      0,
+      this.imageCache.size - 10
+    );
+    toRemove.forEach((key) => this.imageCache.delete(key));
+  }
+
+  private throttle(fn: () => void, delay: number): () => void {
+    let timeout: number | null = null;
+    return () => {
+      if (!timeout) {
+        timeout = window.setTimeout(() => {
+          fn();
+          timeout = null;
+        }, delay);
+      }
+    };
   }
 
   public dispose(): void {

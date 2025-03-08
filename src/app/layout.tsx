@@ -21,7 +21,7 @@ export default function RootLayout({
       </head>
       <body
         className={cn(
-          "antialiased h-svh w-full font-manrope",
+          "antialiased h-svh w-full font-manrope text-white",
           manrope.variable
         )}
       >

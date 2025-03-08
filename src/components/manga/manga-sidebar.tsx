@@ -9,8 +9,8 @@ import { Button } from "../ui/button";
 export const MangaSidebar = memo(function MangaSidebar() {
   return (
     <div className="flex items-center justify-between gap-8">
-      <Button size="icon" variant="ghost">
-        <Maximize />
+      <Button className="" size="icon" variant="ghost">
+        <Maximize aria-hidden />
         <span className="sr-only">Maximize screen</span>
       </Button>
       <Link className="cursor-pointer" href="/">

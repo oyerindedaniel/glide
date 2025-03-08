@@ -16,15 +16,13 @@
   --color-primary-foreground: "";
   --color-secondary: #243c5a;
   --color-secondary-foreground: "";
-  --color-accent: "";
-  --color-accent-foreground: "";
   --color-background: #ffffff;
   --color-foreground: #000000;
   --color-destructive: #ff0000;
   --color-destructive-foreground: #f8fafc;
   --color-input: #e2e8f0;
   --color-accent: #f1f5f9;
-  --color-accent-foreground: #0f172a;
+  --color-accent-foreground: red;
   --color-ring: #d4d4d4;
   --color-border: #262626;
 
@@ -124,18 +122,18 @@
 }
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* --background: #ffffff;
+  --foreground: #171717; */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* --background: #0a0a0a;
+    --foreground: #ededed; */
   }
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
+  /* color: var(--foreground);
+  background: var(--background); */
 }
