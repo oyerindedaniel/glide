@@ -19,6 +19,7 @@ import Header from "@/components/header";
 import { cn } from "@/lib/utils";
 import { useElementMutationListener } from "@/hooks/use-element-mutation-listener";
 import { useDropAnimationStore } from "@/store/drop-animation-store";
+import { useProcessedFilesStore } from "@/store/processed-files";
 
 const defaultClasses =
   "text-center p-4 absolute top-2/4 left-2/4 -translate-x-2/4 -translate-y-2/4";

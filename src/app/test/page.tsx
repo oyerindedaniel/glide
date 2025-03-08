@@ -31,22 +31,23 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center">
-      <h1 className="text-3xl font-bold mb-8">Visibility Check</h1>
-
+    <main className="h-screen">
       {/* Spacer for scrolling */}
-      <div className="h-[150vh] bg-gray-100">Scroll down ⬇️</div>
+      {/* <div className="h-[150vh] bg-gray-100">Scroll down ⬇️</div> */}
 
       {/* Target element to observe */}
-      <div
-        ref={targetRef}
-        className="h-40 w-40 bg-blue-500 text-white flex items-center justify-center"
-      >
-        {isVisible ? "I am visible! ✅" : "I am hidden ❌"}
+      <div className="h-screen relative w-[70%] top-0 overflow-y-auto white">
+        <div className="h-200 w-full bg-red-500 opacity-20 sticky top-0">
+          Oyerinde
+        </div>
+        <div className="h-auto w-full absolute top-0 -z-1">
+          <div className="h-svh w-full bg-yellow-800"></div>
+          <div className="h-svh w-full bg-black"></div>
+        </div>
       </div>
 
       {/* More content for scroll */}
-      <div className="h-[150vh] bg-gray-100">Scroll up ⬆️</div>
+      {/* <div className="h-[150vh] bg-gray-100">Scroll up ⬆️</div> */}
     </main>
   );
 }

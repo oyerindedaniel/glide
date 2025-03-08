@@ -22,3 +22,14 @@ parentRef (e.g., <div>)
         ├── pageEl-2 (height: 100svh)
         ├── pageEl-3 (height: 100svh)
         └── ... (stacked vertically)
+
+
+Resulting this.pageRanges
+three placeholders stacked vertically, each 1500px tall. After running this code, this.pageRanges might look like:
+
+[
+  { pageId: "file1_1", start: 0, end: 1500 },
+  { pageId: "file1_2", start: 1500, end: 3000 },
+  { pageId: "file1_3", start: 3000, end: 4500 }
+]
+

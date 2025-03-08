@@ -35,6 +35,8 @@ export const MangaReader = memo(function MangaReader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  console.log({ allPages });
+
   //   useEffect(() => {
   //     if (rendererRef.current) {
   //      rendererRef.current.updatePages(allPages);
