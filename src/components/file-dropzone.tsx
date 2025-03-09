@@ -35,6 +35,7 @@ import {
 } from "@/constants/processing";
 import pLimit from "p-limit";
 import { useShallow } from "zustand/shallow";
+import { sanitizeFileName, validateFile } from "@/utils/file-validation";
 
 // if (typeof window !== "undefined") {
 //   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -426,32 +427,48 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
     /** Processes file list */
     const handleFiles = useCallback(
       async (files: FileList) => {
-        console.log("in you are suyy1");
         if (processingRef.current) return;
-
-        console.log("in you are suyy2");
 
         processingRef.current = true;
 
         const uploadedFiles = Array.from(files);
 
-        // Ensures all files are one of the allowed types.
-        const invalidFiles = uploadedFiles.filter(
-          (file) => !ALLOWED_FILE_TYPES.includes(file.type)
-        );
-        if (invalidFiles.length > 0) {
-          toast("Only PNG, JPG, and PDF files are allowed.");
-          return;
+        // Validate each file with allowed types
+        for (const file of uploadedFiles) {
+          const validation = validateFile(file, ALLOWED_FILE_TYPES);
+          if (!validation.isValid) {
+            toast.error(`${file.name}: ${validation.error}`);
+            processingRef.current = false;
+            return;
+          }
         }
 
-        // Ensures all files are of the same type.
-        const fileTypes = new Set(uploadedFiles.map((file) => file.type));
+        // Create sanitized files array
+        const sanitizedFiles = uploadedFiles.map((file) => {
+          const sanitizedName = sanitizeFileName(file.name);
+          return new File([file], sanitizedName, { type: file.type });
+        });
+
+        // Check for duplicate sanitized names
+        const fileNames = new Set<string>();
+        for (const file of sanitizedFiles) {
+          if (fileNames.has(file.name)) {
+            toast.error("Duplicate file names detected after sanitization");
+            processingRef.current = false;
+            return;
+          }
+          fileNames.add(file.name);
+        }
+
+        // Rest of your existing handleFiles logic, but use sanitizedFiles instead of uploadedFiles
+        const fileTypes = new Set(sanitizedFiles.map((file) => file.type));
         if (fileTypes.size > 1) {
           toast("Please upload files of the same type (either images or PDF).");
+          processingRef.current = false;
           return;
         }
 
-        for (const file of uploadedFiles) {
+        for (const file of sanitizedFiles) {
           if (processedFiles.has(file.name)) {
             const pages = processedFiles.get(file.name);
             if (pages && Array.from(pages.values()).every((page) => page.url)) {
@@ -462,7 +479,7 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         }
 
         // animation
-        await animate(uploadedFiles.length);
+        await animate(sanitizedFiles.length);
 
         // new abort controller
         abortControllerRef.current?.abort();
@@ -546,15 +563,15 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         const processPromise = new Promise<void>(async (resolve, reject) => {
           try {
             if (isPDF) {
-              if (uploadedFiles.length === 1) {
-                await processPdfsWithConcurrency(uploadedFiles, abortSignal);
+              if (sanitizedFiles.length === 1) {
+                await processPdfsWithConcurrency(sanitizedFiles, abortSignal);
                 // await processSinglePdf(uploadedFiles[0], abortSignal);
               } else {
-                await processPdfsWithConcurrency(uploadedFiles, abortSignal);
+                await processPdfsWithConcurrency(sanitizedFiles, abortSignal);
               }
             } else {
               await processImages(
-                uploadedFiles,
+                sanitizedFiles,
                 abortSignal,
                 updateProgress,
                 state
