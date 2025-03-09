@@ -453,7 +453,7 @@ const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
         const fileNames = new Set<string>();
         for (const file of sanitizedFiles) {
           if (fileNames.has(file.name)) {
-            toast.error("Duplicate file names detected after sanitization");
+            toast.error("Duplicate file names detected");
             processingRef.current = false;
             return;
           }

@@ -1,6 +1,10 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/renderer";
 import { debounce } from "@/utils/app";
+import { ViewMode } from "@/types/manga-reader";
+import { BaseReaderMode } from "./manga-reader-modes/base-reader-mode";
+import { ScrollReaderMode } from "./manga-reader-modes/scroll-reader-mode";
+import { PanelReaderMode } from "./manga-reader-modes/panel-reader-mode";
 
 const BUFFER_SIZE = 3; // Number of pages to load at a time
 const PRELOAD_AHEAD = 2; // Number of pages to preload ahead
@@ -35,6 +39,7 @@ class MangaReaderRenderer {
     height: 0,
   };
   private throttledScrollHandler: () => void;
+  private currentMode: BaseReaderMode;
 
   constructor(canvasContainer: HTMLElement = document.body) {
     this.parentRef = canvasContainer;
@@ -84,6 +89,15 @@ class MangaReaderRenderer {
       passive: true,
     });
     this.handleResize();
+
+    this.currentMode = new ScrollReaderMode(
+      this.canvas,
+      this.context,
+      this.pageContainers,
+      this.imageCache,
+      this.pageDimensions,
+      this.parentRef
+    );
   }
 
   private initWorker(): void {
@@ -128,50 +142,7 @@ class MangaReaderRenderer {
   }
 
   private handleResize(): void {
-    const containerWidth = Math.floor(
-      this.parentRef.clientWidth || window.innerWidth
-    );
-    let newHeight = window.innerHeight;
-
-    if (this.currentPageId) {
-      const dimensions = this.pageDimensions.get(this.currentPageId);
-      if (dimensions) {
-        newHeight = this.getHeightFromAspectRatio(containerWidth, dimensions);
-      }
-    }
-
-    if (
-      this.lastCanvas.width !== containerWidth ||
-      this.lastCanvas.height !== newHeight
-    ) {
-      this.lastCanvas.width = containerWidth;
-      this.lastCanvas.height = newHeight;
-      if (this.worker) {
-        this.worker.postMessage({
-          type: WorkerMessageType.RESIZE,
-          width: containerWidth,
-          height: newHeight,
-        });
-      } else {
-        this.canvas.width = containerWidth;
-        this.canvas.height = newHeight;
-      }
-    }
-
-    // Update all placeholder heights
-    this.pageContainers.forEach((pageEl, pageId) => {
-      const dimensions = this.pageDimensions.get(pageId);
-      if (dimensions) {
-        const placeholderHeight = this.getHeightFromAspectRatio(
-          containerWidth,
-          dimensions
-        );
-        pageEl.style.height = `${placeholderHeight}px`;
-      }
-    });
-
-    this.isSortedListDirty = true;
-    this.throttledScrollHandler();
+    this.currentMode.handleResize();
   }
 
   private handleScroll(): void {
@@ -418,28 +389,6 @@ class MangaReaderRenderer {
       }
     }
   }
-
-  // private async processLoadingQueue(): Promise<void> {
-  //   const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
-  //   console.log("Processing loading queue:", toProcess);
-  //   this.loadingQueue = this.loadingQueue.filter(
-  //     (id) => !toProcess.includes(id)
-  //   );
-
-  //   for (const pageId of toProcess) {
-  //     if (this.loadedPages.has(pageId)) continue;
-
-  //     const pageEl = this.pageContainers.get(pageId);
-  //     if (!pageEl) continue;
-  //     const url = pageEl.dataset.url;
-  //     if (!url) continue;
-  //     try {
-  //       await this.loadAndCacheImage(pageId, url);
-  //     } catch (err) {
-  //       console.error(`Failed to load image for page ${pageId}:`, err);
-  //     }
-  //   }
-  // }
 
   private async processLoadingQueue(): Promise<void> {
     const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
@@ -778,6 +727,27 @@ class MangaReaderRenderer {
 
     window.removeEventListener("resize", this.resizeHandler);
     this.parentRef.removeEventListener("scroll", this.scrollHandler);
+  }
+
+  public setViewMode(mode: ViewMode): void {
+    this.currentMode.cleanup();
+
+    const modeParams = [
+      this.canvas,
+      this.context,
+      this.pageContainers,
+      this.imageCache,
+      this.pageDimensions,
+      this.parentRef,
+    ] as const;
+
+    if (mode === ViewMode.PANEL) {
+      this.currentMode = new PanelReaderMode(...modeParams);
+    } else {
+      this.currentMode = new ScrollReaderMode(...modeParams);
+    }
+
+    this.currentMode.initialize();
   }
 }
 
