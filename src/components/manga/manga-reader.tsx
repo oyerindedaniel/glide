@@ -1,8 +1,10 @@
 "use client";
 
-import { memo, useEffect, useRef } from "react";
+import { ViewMode } from "@/types/manga-reader";
 import { ProcessingStatus } from "@/store/processed-files";
+import { memo, useRef, useEffect, RefObject } from "react";
 import { MangaReaderRenderer } from "@/classes/manga-reader-renderer";
+import { cn } from "@/lib/utils";
 
 interface MangaReaderProps {
   mangaId?: string;
@@ -12,14 +14,17 @@ interface MangaReaderProps {
     url: string;
     status: ProcessingStatus;
   }>;
+  viewMode: ViewMode;
+  rendererRef: RefObject<MangaReaderRenderer | null>;
 }
 
 export const MangaReader = memo(function MangaReader({
   mangaId,
   allPages,
+  viewMode,
+  rendererRef,
 }: MangaReaderProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const rendererRef = useRef<MangaReaderRenderer | null>(null);
 
   useEffect(() => {
     if (containerRef.current && !rendererRef.current) {
@@ -32,7 +37,6 @@ export const MangaReader = memo(function MangaReader({
         rendererRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   //   useEffect(() => {
@@ -45,7 +49,12 @@ export const MangaReader = memo(function MangaReader({
     <div
       id="manga-container"
       ref={containerRef}
-      className="w-full h-full relative overflow-y-auto overflow-x-hidden"
+      className={cn(
+        `w-full h-full relative`,
+        viewMode === ViewMode.SCROLL
+          ? "overflow-y-auto overflow-x-hidden"
+          : "overflow-hidden"
+      )}
     />
   );
 });

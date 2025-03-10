@@ -54,3 +54,40 @@ export function formatFileSize(bytes: number): string {
 
   return `${(bytes / MB).toFixed(2)} MB`;
 }
+
+/**
+ * Throttle utility to limit the execution of a function.
+ * Ensures the provided function is called at most once in the specified time frame.
+ *
+ * @template T - Type of the function to throttle.
+ * @param func - The function to be throttled.
+ * @param delay - The minimum delay (in milliseconds) between function executions.
+ * @returns A throttled version of the input function.
+ */
+export function throttle<T extends (...args: unknown[]) => void>(
+  func: T,
+  delay: number
+): (...args: Parameters<T>) => void {
+  let lastCall = 0;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  return function (...args: Parameters<T>): void {
+    const now = Date.now();
+    const remainingTime = delay - (now - lastCall);
+
+    if (remainingTime <= 0) {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      lastCall = now;
+      func(...args);
+    } else if (!timeout) {
+      timeout = setTimeout(() => {
+        lastCall = Date.now();
+        timeout = null;
+        func(...args);
+      }, remainingTime);
+    }
+  };
+}
