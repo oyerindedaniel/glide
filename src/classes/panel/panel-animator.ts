@@ -1,105 +1,140 @@
 import { PanelData } from "@/types/manga-reader";
 
+export interface PanelRenderData {
+  panel: PanelData;
+  canvas: {
+    width: number;
+    height: number;
+  };
+}
+
+export interface AnimationFrame {
+  src: { x: number; y: number; width: number; height: number };
+  dest: { x: number; y: number; width: number; height: number };
+  text?: string;
+  progress: number;
+}
+
 export class PanelAnimator {
-  private canvas: HTMLCanvasElement;
-  private context: CanvasRenderingContext2D | null;
-  private transitionDuration: number = 500;
-
-  constructor(
-    canvas: HTMLCanvasElement,
-    context: CanvasRenderingContext2D | null
+  calculatePanelDimensions(
+    panel: PanelData,
+    canvasWidth: number,
+    canvasHeight: number
   ) {
-    this.canvas = canvas;
-    this.context = context;
-  }
-
-  async animateToPanel(img: HTMLImageElement, panel: PanelData): Promise<void> {
-    if (!this.context) return;
-
     const [srcX, srcY, srcWidth, srcHeight] = panel.bbox;
-    const scale = Math.min(
-      this.canvas.width / srcWidth,
-      this.canvas.height / srcHeight
-    );
+
+    // Calculate scale factor while maintaining aspect ratio
+    const scaleX = canvasWidth / srcWidth;
+    const scaleY = canvasHeight / srcHeight;
+    const scale = Math.min(scaleX, scaleY);
+
+    // Apply scaling to position and size
     const scaledWidth = srcWidth * scale;
     const scaledHeight = srcHeight * scale;
-    const destX = (this.canvas.width - scaledWidth) / 2;
-    const destY = (this.canvas.height - scaledHeight) / 2;
+    const scaledX = srcX * scale;
+    const scaledY = srcY * scale;
 
-    await this.animate(
-      img,
-      srcX,
-      srcY,
-      srcWidth,
-      srcHeight,
-      destX,
-      destY,
-      scaledWidth,
-      scaledHeight
+    // const destX = (canvasWidth - scaledWidth) / 2;
+    // const destY = (canvasHeight - scaledHeight) / 2;
+
+    return {
+      src: { x: srcX, y: srcY, width: srcWidth, height: srcHeight },
+      dest: {
+        x: scaledX,
+        y: scaledY,
+        width: scaledWidth,
+        height: scaledHeight,
+      },
+      text: panel.text,
+    };
+  }
+
+  calculateAnimationFrames(
+    fromPanel: PanelData | null,
+    toPanel: PanelData,
+    canvasWidth: number,
+    canvasHeight: number,
+    frameCount: number = 20
+  ): AnimationFrame[] {
+    // If there's no fromPanel, we just return the target panel dimensions
+    if (!fromPanel) {
+      const dimensions = this.calculatePanelDimensions(
+        toPanel,
+        canvasWidth,
+        canvasHeight
+      );
+      return [{ ...dimensions, progress: 1 }];
+    }
+
+    const fromDimensions = this.calculatePanelDimensions(
+      fromPanel,
+      canvasWidth,
+      canvasHeight
+    );
+    const toDimensions = this.calculatePanelDimensions(
+      toPanel,
+      canvasWidth,
+      canvasHeight
     );
 
-    if (panel.text) {
-      this.renderPanelText(panel.text, destX, destY + scaledHeight);
-    }
-  }
+    const frames: AnimationFrame[] = [];
 
-  private animate(
-    img: HTMLImageElement,
-    srcX: number,
-    srcY: number,
-    srcWidth: number,
-    srcHeight: number,
-    destX: number,
-    destY: number,
-    destWidth: number,
-    destHeight: number
-  ): Promise<void> {
-    return new Promise((resolve) => {
-      const startTime = performance.now();
+    for (let i = 0; i <= frameCount; i++) {
+      const progress = i / frameCount;
+      const easedProgress = this.easeInOutQuad(progress);
 
-      const animate = (currentTime: number) => {
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / this.transitionDuration, 1);
-
-        const eased =
-          progress < 0.5
-            ? 2 * progress * progress
-            : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-
-        if (this.context) {
-          this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-          this.context.drawImage(
-            img,
-            srcX,
-            srcY,
-            srcWidth,
-            srcHeight,
-            destX,
-            destY,
-            destWidth,
-            destHeight
-          );
-        }
-
-        if (progress < 1) {
-          requestAnimationFrame(animate);
-        } else {
-          resolve();
-        }
+      const frame: AnimationFrame = {
+        src: {
+          x: this.lerp(fromDimensions.src.x, toDimensions.src.x, easedProgress),
+          y: this.lerp(fromDimensions.src.y, toDimensions.src.y, easedProgress),
+          width: this.lerp(
+            fromDimensions.src.width,
+            toDimensions.src.width,
+            easedProgress
+          ),
+          height: this.lerp(
+            fromDimensions.src.height,
+            toDimensions.src.height,
+            easedProgress
+          ),
+        },
+        dest: {
+          x: this.lerp(
+            fromDimensions.dest.x,
+            toDimensions.dest.x,
+            easedProgress
+          ),
+          y: this.lerp(
+            fromDimensions.dest.y,
+            toDimensions.dest.y,
+            easedProgress
+          ),
+          width: this.lerp(
+            fromDimensions.dest.width,
+            toDimensions.dest.width,
+            easedProgress
+          ),
+          height: this.lerp(
+            fromDimensions.dest.height,
+            toDimensions.dest.height,
+            easedProgress
+          ),
+        },
+        text: toDimensions.text,
+        progress,
       };
 
-      requestAnimationFrame(animate);
-    });
+      frames.push(frame);
+    }
+
+    return frames;
   }
 
-  private renderPanelText(text: string, x: number, y: number): void {
-    if (!this.context) return;
+  private lerp(start: number, end: number, amount: number): number {
+    return start + (end - start) * amount;
+  }
 
-    this.context.font = "16px Arial";
-    this.context.fillStyle = "white";
-    this.context.strokeStyle = "black";
-    this.context.lineWidth = 3;
-    this.context.strokeText(text, x, y);
-    this.context.fillText(text, x, y);
+  private easeInOutQuad(t: number): number {
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   }
 }

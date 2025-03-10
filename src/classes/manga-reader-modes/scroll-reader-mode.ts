@@ -29,8 +29,8 @@ export class ScrollReaderMode extends BaseReaderMode {
       const newCurrentPage = this.determineCurrentPage();
       const currentPageId = this.getCurrentPageId();
       if (
-        newCurrentPage !== currentPageId &&
         newCurrentPage &&
+        newCurrentPage !== currentPageId &&
         this._visiblePages.has(newCurrentPage)
       ) {
         this.handlers?.renderVisiblePage(newCurrentPage);
@@ -59,7 +59,7 @@ export class ScrollReaderMode extends BaseReaderMode {
     }
   }
 
-  renderPage(pageId: string): string | void {
+  public renderPage(pageId: string): string | void {
     const visibleLoadedPages = Array.from(this._visiblePages).filter(
       (pageId) => this.handlers?.hasLoadedPage(pageId) || false
     );
@@ -116,14 +116,18 @@ export class ScrollReaderMode extends BaseReaderMode {
       }
     });
 
-    this.throttledPageRenderer();
+    const currentPageId = this.getCurrentPageId();
+    if (currentPageId) {
+      this.throttledPageRenderer();
+    }
   }
 
   handleScroll(): void {
-    this.throttledPageRenderer();
-
     const currentPageId = this.getCurrentPageId();
     if (!currentPageId) return;
+
+    this.throttledPageRenderer();
+
     const placeholder = this.pageContainers.get(currentPageId);
     if (!placeholder) return;
 

@@ -64,7 +64,8 @@ export function formatFileSize(bytes: number): string {
  * @param delay - The minimum delay (in milliseconds) between function executions.
  * @returns A throttled version of the input function.
  */
-export function throttle<T extends (...args: unknown[]) => void>(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function throttle<T extends (...args: any[]) => void>(
   func: T,
   delay: number
 ): (...args: Parameters<T>) => void {

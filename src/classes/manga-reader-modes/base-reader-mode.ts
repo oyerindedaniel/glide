@@ -9,6 +9,7 @@ export interface handlers {
   processLoadingQueue: () => void;
   renderVisiblePage: (pageId: string) => void;
   hasLoadedPage: (pageId: string) => boolean;
+  renderPanel: (pageId: string, panelIndex: number) => void;
 }
 
 export interface PageData {
