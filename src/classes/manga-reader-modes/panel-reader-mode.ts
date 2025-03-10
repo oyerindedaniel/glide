@@ -1,4 +1,4 @@
-import { BaseReaderMode, PageData } from "./base-reader-mode";
+import { BaseReaderMode } from "./base-reader-mode";
 import { PanelWebSocketManager } from "../panel/panel-websocket-manager";
 import { PanelAnimator } from "../panel/panel-animator";
 import { PanelPlaybackController } from "../panel/panel-playback-controller";
@@ -6,6 +6,7 @@ import { PanelData, PagePanelData } from "@/types/manga-reader";
 import { PRELOAD_AHEAD } from "../manga-reader-renderer";
 import { ProcessingStatus } from "@/store/processed-files";
 import { throttle } from "@/utils/app";
+import { MangaPage } from "@/types/manga-reader";
 
 export class PanelReaderMode extends BaseReaderMode {
   private panelData: Map<string, PanelData[]> = new Map();
@@ -46,6 +47,8 @@ export class PanelReaderMode extends BaseReaderMode {
     this.playbackController.stop();
     this.panelData.clear();
     this.currentPanelIndex = 0;
+    this.currentPageIndex = 0;
+    this.animator.dispose();
   }
 
   private handlePanelData(data: PagePanelData): void {
@@ -86,7 +89,7 @@ export class PanelReaderMode extends BaseReaderMode {
   }
 
   private renderCurrentPanel() {
-    const currentPageId = Array.from(this._visiblePages)[0];
+    const currentPageId = this.getCurrentPageId();
     if (!currentPageId) return;
 
     const panels = this.panelData.get(currentPageId);
@@ -294,7 +297,7 @@ export class PanelReaderMode extends BaseReaderMode {
     }
   }
 
-  render(allPages: PageData[]): void {
+  render(allPages: MangaPage[]): void {
     // TODO: consider using a page container for the pages
     const pageContainer = document.createElement("div");
     pageContainer.className = "manga-scroll-container";

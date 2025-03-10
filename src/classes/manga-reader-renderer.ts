@@ -1,5 +1,5 @@
 import { PanelData } from "@/types/manga-reader";
-import { PageData } from "./manga-reader-modes/base-reader-mode";
+import { MangaPage } from "@/types/manga-reader";
 import { ViewMode } from "@/types/manga-reader";
 import { ProcessingStatus } from "@/store/processed-files";
 import { BaseReaderMode } from "./manga-reader-modes/base-reader-mode";
@@ -25,8 +25,7 @@ class MangaReaderRenderer {
     new Map();
   private resizeHandler: () => void;
   private scrollHandler: () => void;
-  private transitionTimeout: ReturnType<typeof setTimeout> | null = null;
-  private rfa: ReturnType<typeof requestAnimationFrame> | null = null;
+  private scrollRaf: ReturnType<typeof requestAnimationFrame> | null = null;
   private imageCache: Map<string, HTMLImageElement> = new Map();
   private lastCanvas: { width: number; height: number } = {
     width: 0,
@@ -61,19 +60,9 @@ class MangaReaderRenderer {
       this.context = this.canvas.getContext("2d", { alpha: false });
     }
 
-    // Event handlers
-    this.resizeHandler = this.handleResize.bind(this);
-    this.scrollHandler = this.handleScroll.bind(this);
-    window.addEventListener("resize", this.resizeHandler);
-    this.parentRef.addEventListener("scroll", this.scrollHandler, {
-      passive: true,
-    });
-    this.handleResize();
-
     this.currentViewMode = ViewMode.SCROLL;
     this.currentMode = new ScrollReaderMode({
       canvas: this.canvas,
-      context: this.context,
       pageContainers: this.pageContainers,
       isSortedListDirty: () => this.isSortedListDirty,
       currentPageId: () => this.currentPageId,
@@ -84,7 +73,18 @@ class MangaReaderRenderer {
       handlers: this.getHandlers(),
     });
 
+    this.currentMode.initialize();
+
     this.animator = new PanelAnimator();
+
+    // Event handlers
+    this.resizeHandler = this.handleResize.bind(this);
+    this.scrollHandler = this.handleScroll.bind(this);
+    window.addEventListener("resize", this.resizeHandler);
+    this.parentRef.addEventListener("scroll", this.scrollHandler, {
+      passive: true,
+    });
+    this.handleResize();
   }
 
   private initWorker(): void {
@@ -164,8 +164,8 @@ class MangaReaderRenderer {
   }
 
   private handleScroll(): void {
-    if (this.rfa) cancelAnimationFrame(this.rfa);
-    this.rfa = requestAnimationFrame(() => {
+    if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
+    this.scrollRaf = requestAnimationFrame(() => {
       this.currentMode.handleScroll();
     });
   }
@@ -188,79 +188,76 @@ class MangaReaderRenderer {
     this.currentPageId = pageId;
 
     const dimensions = this.pageDimensions.get(pageId);
-    if (dimensions) {
-      const containerWidth = Math.floor(
-        this.parentRef.clientWidth || window.innerWidth
-      );
-      const newHeight = this.getHeightFromAspectRatio(
-        containerWidth,
-        dimensions
-      );
+    if (!dimensions) return;
 
-      if (
-        this.lastCanvas.width !== containerWidth ||
-        this.lastCanvas.height !== newHeight
-      ) {
-        this.lastCanvas = { width: containerWidth, height: newHeight };
-        if (this.worker) {
-          this.worker.postMessage({
-            type: WorkerMessageType.RESIZE,
-            width: containerWidth,
-            height: newHeight,
-          });
+    const containerWidth = Math.floor(
+      this.parentRef.clientWidth || window.innerWidth
+    );
+    const newHeight = this.getHeightFromAspectRatio(containerWidth, dimensions);
+
+    if (
+      this.lastCanvas.width !== containerWidth ||
+      this.lastCanvas.height !== newHeight
+    ) {
+      this.lastCanvas = { width: containerWidth, height: newHeight };
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RESIZE,
+          width: containerWidth,
+          height: newHeight,
+        });
+      } else {
+        this.canvas.width = containerWidth;
+        this.canvas.height = newHeight;
+      }
+    }
+
+    // For Panel mode, handle panel rendering
+    if (
+      this.currentMode instanceof PanelReaderMode &&
+      this.hasLoadedPage(pageId)
+    ) {
+      const currentPanelIndex = (
+        this.currentMode as PanelReaderMode
+      ).getCurrentPanelIndex();
+      this.renderPanelToCanvas(pageId, currentPanelIndex);
+    }
+    // For Scroll mode or fallback, render the whole page
+    else if (this.hasLoadedPage(pageId)) {
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RENDER_PAGE,
+          pageId,
+        });
+      } else if (this.context) {
+        const scale = Math.min(
+          this.canvas.width / dimensions!.width,
+          this.canvas.height / dimensions!.height
+        );
+        const scaledWidth = dimensions!.width * scale;
+        const scaledHeight = dimensions!.height * scale;
+        const x = (this.canvas.width - scaledWidth) / 2;
+        const y = (this.canvas.height - scaledHeight) / 2;
+
+        const img = this.imageCache.get(pageId) || new Image();
+        if (!this.imageCache.has(pageId)) {
+          img.src = this.pageContainers.get(pageId)?.dataset.url || "";
+          img.onload = () => {
+            this.imageCache.set(pageId, img);
+            this.context?.drawImage(img, x, y, scaledWidth, scaledHeight);
+          };
+          img.onerror = () => {
+            console.error(`Failed to load image for page ${pageId}`);
+          };
         } else {
-          this.canvas.width = containerWidth;
-          this.canvas.height = newHeight;
-        }
-      }
-
-      // For Panel mode, handle panel rendering
-      if (
-        this.currentMode instanceof PanelReaderMode &&
-        this.hasLoadedPage(pageId)
-      ) {
-        const currentPanelIndex = (
-          this.currentMode as PanelReaderMode
-        ).getCurrentPanelIndex();
-        this.renderPanelToCanvas(pageId, currentPanelIndex);
-      }
-      // For Scroll mode or fallback, render the whole page
-      else if (this.hasLoadedPage(pageId)) {
-        if (this.worker) {
-          this.worker.postMessage({
-            type: WorkerMessageType.RENDER_PAGE,
-            pageId,
-          });
-        } else if (this.context) {
-          const scale = Math.min(
-            this.canvas.width / dimensions!.width,
-            this.canvas.height / dimensions!.height
-          );
-          const scaledWidth = dimensions!.width * scale;
-          const scaledHeight = dimensions!.height * scale;
-          const x = (this.canvas.width - scaledWidth) / 2;
-          const y = (this.canvas.height - scaledHeight) / 2;
-
-          const img = this.imageCache.get(pageId) || new Image();
-          if (!this.imageCache.has(pageId)) {
-            img.src = this.pageContainers.get(pageId)?.dataset.url || "";
-            img.onload = () => {
-              this.imageCache.set(pageId, img);
-              this.context?.drawImage(img, x, y, scaledWidth, scaledHeight);
-            };
-            img.onerror = () => {
-              console.error(`Failed to load image for page ${pageId}`);
-            };
-          } else {
-            this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            this.context.drawImage(img, x, y, scaledWidth, scaledHeight);
-          }
+          this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          this.context.drawImage(img, x, y, scaledWidth, scaledHeight);
         }
       }
     }
   }
 
-  public render(allPages: Array<PageData>): void {
+  public render(allPages: MangaPage[]): void {
     this.pageContainers.clear();
     this.loadedPages.clear();
 
@@ -273,14 +270,7 @@ class MangaReaderRenderer {
     this.checkVisiblePages();
   }
 
-  private preloadInitialPages(
-    allPages: Array<{
-      fileName: string;
-      pageNumber: number;
-      url: string;
-      status: ProcessingStatus;
-    }>
-  ): void {
+  private preloadInitialPages(allPages: MangaPage[]): void {
     const initialPages = allPages
       .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
       .slice(0, BUFFER_SIZE + PRELOAD_AHEAD);
@@ -408,7 +398,9 @@ class MangaReaderRenderer {
         img.src = url;
       });
     } finally {
-      this.loadingQueueInProgress.delete(pageId);
+      setTimeout(() => {
+        this.loadingQueueInProgress.delete(pageId);
+      }, 1000);
     }
   }
 
@@ -416,7 +408,7 @@ class MangaReaderRenderer {
     this.loadedPages.add(pageId);
     if (this.currentMode.visiblePages.has(pageId)) {
       const currentPage = this.determineCurrentPage();
-      if (currentPage !== pageId) {
+      if (currentPage === pageId && currentPage !== this.currentPageId) {
         this.renderVisiblePage(pageId);
       }
     }
@@ -443,7 +435,6 @@ class MangaReaderRenderer {
 
     if (!panels || !panels[panelIndex]) return;
 
-    // Get current panel
     const panel = panels[panelIndex];
 
     // For animations, get previous panel if applicable
@@ -463,7 +454,6 @@ class MangaReaderRenderer {
       }
     }
 
-    // Clear any existing animation
     if (this.animationRaf) {
       cancelAnimationFrame(this.animationRaf);
       this.animationRaf = null;
@@ -596,7 +586,6 @@ class MangaReaderRenderer {
 
     const modeParams = {
       canvas: this.canvas,
-      context: this.context,
       pageContainers: this.pageContainers,
       pageDimensions: this.pageDimensions,
       parentRef: this.parentRef,
@@ -657,7 +646,6 @@ class MangaReaderRenderer {
   }
 
   public dispose(): void {
-    if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
     if (this.worker) {
       this.worker.postMessage({ type: WorkerMessageType.TERMINATE });
       this.worker = null;
@@ -666,6 +654,26 @@ class MangaReaderRenderer {
     this.pageContainers.clear();
     this.pageDimensions.clear();
     this.loadingQueue = [];
+
+    if (this.currentMode) {
+      this.currentMode.cleanup();
+    }
+
+    if (this.animationRaf) {
+      cancelAnimationFrame(this.animationRaf);
+      this.animationRaf = null;
+    }
+
+    if (this.animator) {
+      this.animator.dispose();
+    }
+
+    this.animationFrames = [];
+
+    if (this.scrollRaf) {
+      cancelAnimationFrame(this.scrollRaf);
+      this.scrollRaf = null;
+    }
 
     if (this.canvas.parentNode) {
       this.canvas.parentNode.removeChild(this.canvas);

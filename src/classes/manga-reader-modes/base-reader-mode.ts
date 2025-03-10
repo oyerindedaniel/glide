@@ -2,6 +2,7 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { PageDimensions } from "@/types/manga-reader";
 import { PRELOAD_AHEAD } from "../manga-reader-renderer";
+import { MangaPage } from "@/types/manga-reader";
 
 export interface handlers {
   needsLoad: (pageId: string) => boolean;
@@ -12,16 +13,8 @@ export interface handlers {
   renderPanel: (pageId: string, panelIndex: number) => void;
 }
 
-export interface PageData {
-  fileName: string;
-  pageNumber: number;
-  url: string;
-  status: ProcessingStatus;
-}
-
 export interface BaseReaderModeParams {
   canvas: HTMLCanvasElement;
-  context: CanvasRenderingContext2D | null;
   currentPageId: () => string | null;
   isSortedListDirty: () => boolean;
   setIsSortedListDirty: (isDirty: boolean) => void;
@@ -33,7 +26,6 @@ export interface BaseReaderModeParams {
 
 export abstract class BaseReaderMode {
   protected canvas: HTMLCanvasElement;
-  protected context: CanvasRenderingContext2D | null;
   protected getCurrentPageId: () => string | null;
   protected getIsSortedListDirty: () => boolean;
   protected pageContainers: Map<string, HTMLDivElement>;
@@ -45,7 +37,6 @@ export abstract class BaseReaderMode {
 
   constructor({
     canvas,
-    context,
     pageContainers,
     currentPageId,
     isSortedListDirty,
@@ -55,7 +46,6 @@ export abstract class BaseReaderMode {
     handlers,
   }: BaseReaderModeParams) {
     this.canvas = canvas;
-    this.context = context;
     this.pageContainers = pageContainers;
     this.getCurrentPageId = currentPageId;
     this.getIsSortedListDirty = isSortedListDirty;
@@ -72,7 +62,7 @@ export abstract class BaseReaderMode {
   abstract handleScroll(): void;
   abstract determineCurrentPage(): string | null;
   abstract checkVisiblePages(): void;
-  abstract render(allPages: PageData[]): void;
+  abstract render(allPages: MangaPage[]): void;
 
   protected getHeightFromAspectRatio(
     containerWidth: number,

@@ -16,6 +16,9 @@ export interface AnimationFrame {
 }
 
 export class PanelAnimator {
+  private animationFrameId: number | null = null;
+  private isDisposed: boolean = false;
+
   calculatePanelDimensions(
     panel: PanelData,
     canvasWidth: number,
@@ -136,5 +139,61 @@ export class PanelAnimator {
 
   private easeInOutQuad(t: number): number {
     return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  }
+
+  /**
+   * Cancels any ongoing animations and cleans up resources
+   */
+  dispose(): void {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    this.isDisposed = true;
+  }
+
+  /**
+   * Starts animating between panels
+   */
+  animateBetweenPanels(
+    callback: (frame: AnimationFrame) => void,
+    frames: AnimationFrame[],
+    duration: number = 500
+  ): void {
+    if (this.isDisposed) return;
+
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+    }
+
+    let startTime: number | null = null;
+
+    const animate = (timestamp: number) => {
+      if (this.isDisposed) return;
+
+      if (startTime === null) {
+        startTime = timestamp;
+      }
+
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Find the closest frame based on progress
+      const frameIndex = Math.min(
+        Math.floor(progress * frames.length),
+        frames.length - 1
+      );
+
+      callback(frames[frameIndex]);
+
+      if (progress < 1) {
+        this.animationFrameId = requestAnimationFrame(animate);
+      } else {
+        this.animationFrameId = null;
+      }
+    };
+
+    this.animationFrameId = requestAnimationFrame(animate);
   }
 }

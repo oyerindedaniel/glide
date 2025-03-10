@@ -1,19 +1,14 @@
 "use client";
 
 import { ViewMode } from "@/types/manga-reader";
-import { ProcessingStatus } from "@/store/processed-files";
 import { memo, useRef, useEffect, RefObject } from "react";
 import { MangaReaderRenderer } from "@/classes/manga-reader-renderer";
 import { cn } from "@/lib/utils";
+import { MangaPage } from "@/types/manga-reader";
 
 interface MangaReaderProps {
   mangaId?: string;
-  allPages: Array<{
-    fileName: string;
-    pageNumber: number;
-    url: string;
-    status: ProcessingStatus;
-  }>;
+  allPages: MangaPage[];
   viewMode: ViewMode;
   rendererRef: RefObject<MangaReaderRenderer | null>;
 }

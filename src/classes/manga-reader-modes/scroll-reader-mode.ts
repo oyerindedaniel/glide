@@ -2,7 +2,7 @@
 import { debounce, throttle } from "@/utils/app";
 import { BaseReaderMode } from "./base-reader-mode";
 import { ProcessingStatus } from "@/store/processed-files";
-import { PageData } from "./base-reader-mode";
+import { MangaPage } from "@/types/manga-reader";
 
 const DEFAULT_ASPECT_RATIO = 1.5; // Default for initial placeholder heights
 
@@ -35,25 +35,21 @@ export class ScrollReaderMode extends BaseReaderMode {
       ) {
         this.handlers?.renderVisiblePage(newCurrentPage);
       }
-    }, 100);
+    }, 150);
   }
 
   initialize(): void {
-    this.canvas.style.position = "sticky";
+    this.canvas.style.position = "fixed";
     this.canvas.style.top = "0";
     this.canvas.style.left = "0";
     this.canvas.style.transform = "translate3d(0, 0, 0)";
-    this.handleResize();
-
-    if (this.pageContainers.size > 0) {
-      this.pageContainers.forEach((el) => this.observer.observe(el));
-    }
   }
 
   cleanup(): void {
     this.observer.disconnect();
     this._visiblePages.clear();
     this.lastScrollTop = 0;
+    this.sortedPageIds = [];
     if (this.transitionTimeout) {
       clearTimeout(this.transitionTimeout);
     }
@@ -95,7 +91,7 @@ export class ScrollReaderMode extends BaseReaderMode {
 
     if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
     this.transitionTimeout = setTimeout(() => {
-      this.canvas.style.transition = "";
+      this.canvas.style.transition = "none";
     }, 600);
 
     return pageId;
@@ -163,7 +159,7 @@ export class ScrollReaderMode extends BaseReaderMode {
       }
     }
 
-    this.canvas.style.transition = "";
+    this.canvas.style.transition = "none";
     this.canvas.style.transform = `translate3d(0, ${translateY}px, 0)`;
   }
 
@@ -329,7 +325,7 @@ export class ScrollReaderMode extends BaseReaderMode {
     }
   }
 
-  render(allPages: PageData[]): void {
+  render(allPages: MangaPage[]): void {
     const scrollContainer = document.createElement("div");
     scrollContainer.className = "manga-scroll-container";
     scrollContainer.style.position = "absolute";
