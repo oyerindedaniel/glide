@@ -10,6 +10,7 @@ import { throttle } from "@/utils/app";
 export class PanelReaderMode extends BaseReaderMode {
   private panelData: Map<string, PanelData[]> = new Map();
   private currentPanelIndex: number = 0;
+  private currentPageIndex: number = 0;
   private wsManager: PanelWebSocketManager;
   private animator: PanelAnimator;
   private playbackController: PanelPlaybackController;
@@ -61,9 +62,8 @@ export class PanelReaderMode extends BaseReaderMode {
   }
 
   renderPage(pageId: string): string | void {
-    this.currentPanelIndex = Array.from(this.pageContainers.keys()).indexOf(
-      pageId
-    );
+    const pageIds = Array.from(this.pageContainers.keys());
+    this.currentPageIndex = pageIds.indexOf(pageId);
     this._visiblePages.clear();
     this._visiblePages.add(pageId);
 
@@ -100,6 +100,37 @@ export class PanelReaderMode extends BaseReaderMode {
     return;
   }
 
+  // Page Navigation Methods
+  isNextPage(): boolean {
+    const pageIds = Array.from(this.pageContainers.keys());
+    return this.currentPageIndex < pageIds.length - 1;
+  }
+
+  isPreviousPage(): boolean {
+    return this.currentPageIndex > 0;
+  }
+
+  nextPage(): void {
+    const currentPageId = this.getCurrentPageId();
+    if (!currentPageId) return;
+
+    const pageIds = Array.from(this.pageContainers.keys());
+    this.currentPageIndex = Math.min(
+      pageIds.indexOf(currentPageId) + 1,
+      pageIds.length - 1
+    );
+    this.renderCurrentPanel();
+  }
+
+  previousPage(): void {
+    const currentPageId = this.getCurrentPageId();
+    if (!currentPageId) return;
+
+    const pageIds = Array.from(this.pageContainers.keys());
+    this.currentPageIndex = Math.max(pageIds.indexOf(currentPageId) - 1, 0);
+    this.renderCurrentPanel();
+  }
+
   // Navigation methods
   nextPanel(): void {
     const currentPageId = Array.from(this._visiblePages)[0];
@@ -129,7 +160,7 @@ export class PanelReaderMode extends BaseReaderMode {
     if (!this.getCurrentPageId()) {
       return pageIds[0] || null;
     }
-    return pageIds[this.currentPanelIndex];
+    return pageIds[this.currentPageIndex];
   }
 
   checkVisiblePages(): void {

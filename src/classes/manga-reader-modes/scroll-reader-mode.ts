@@ -28,7 +28,11 @@ export class ScrollReaderMode extends BaseReaderMode {
     this.throttledPageRenderer = throttle(() => {
       const newCurrentPage = this.determineCurrentPage();
       const currentPageId = this.getCurrentPageId();
-      if (newCurrentPage !== currentPageId && newCurrentPage) {
+      if (
+        newCurrentPage !== currentPageId &&
+        newCurrentPage &&
+        this._visiblePages.has(newCurrentPage)
+      ) {
         this.handlers?.renderVisiblePage(newCurrentPage);
       }
     }, 100);
@@ -216,8 +220,8 @@ export class ScrollReaderMode extends BaseReaderMode {
       if (!pageId) return;
 
       if (entry.isIntersecting) {
-        if (!this.visiblePages.has(pageId)) {
-          this.visiblePages.add(pageId);
+        if (!this._visiblePages.has(pageId)) {
+          this._visiblePages.add(pageId);
           if (
             this.handlers?.needsLoad(pageId) &&
             status === ProcessingStatus.COMPLETED &&
@@ -229,7 +233,7 @@ export class ScrollReaderMode extends BaseReaderMode {
           }
         }
       } else {
-        this.visiblePages.delete(pageId);
+        this._visiblePages.delete(pageId);
       }
     });
 
