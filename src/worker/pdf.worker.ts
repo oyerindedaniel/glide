@@ -29,6 +29,14 @@ export type WorkerMessage =
       type: WorkerMessageType.ProcessPage;
       pageNumber: number;
       config: PageProcessingConfig;
+      displayInfo?: {
+        devicePixelRatio: number;
+        containerWidth: number; // The width of the container (75% of screen)
+        containerHeight?: number; // Optional container height
+      };
+    }
+  | {
+      type: WorkerMessageType.AbortProcessing;
     };
 
 export type WorkerResponse =
@@ -117,21 +125,24 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
           throw new Error("PDF document is not initialized");
         }
 
-        const { pageNumber, config } = e.data;
+        const { pageNumber, config, displayInfo } = e.data;
         const page = await pdfDocument.getPage(pageNumber);
 
         if (!page) throw new Error(`Page ${pageNumber} could not be retrieved`);
 
-        // Adjust viewport scale based on maxDimension constraint
+        // Get the original viewport at scale 1.0
         const originalViewport = page.getViewport({ scale: 1.0 });
-        // TODO: review this scale factor and config options: root for initial dimension for how manga woud look like across various screens size even after maintaining aspect ratio
-        const scale = Math.min(
-          config.maxDimension /
-            Math.max(originalViewport.width, originalViewport.height),
-          config.scale
+
+        // Calculate optimal scale based on multiple factors
+        const optimalScale = calculateOptimalScale(
+          originalViewport.width,
+          originalViewport.height,
+          config,
+          displayInfo
         );
 
-        const viewport = page.getViewport({ scale });
+        // Create viewport with the calculated scale
+        const viewport = page.getViewport({ scale: optimalScale });
 
         const canvasContext = canvasFactory.create(
           viewport.width,
@@ -169,6 +180,13 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         self.postMessage(response, [arrayBuffer]);
         break;
 
+      case WorkerMessageType.AbortProcessing:
+        if (pdfDocument) {
+          pdfDocument.cleanup();
+          pdfDocument = null;
+        }
+        break;
+
       default:
         throw new Error("Unknown message type");
     }
@@ -186,3 +204,61 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
     self.postMessage(response);
   }
 };
+
+function calculateOptimalScale(
+  pdfWidth: number,
+  pdfHeight: number,
+  config: PageProcessingConfig,
+  displayInfo?: {
+    devicePixelRatio: number;
+    containerWidth: number;
+    containerHeight?: number;
+  }
+): number {
+  const baseScale = config.scale;
+
+  const pixelRatio = displayInfo?.devicePixelRatio || 1;
+
+  // Consider device pixel ratio for high-DPI displays
+  // This ensures sharper rendering on high-DPI screens
+  const dprAdjustedScale = baseScale * Math.min(pixelRatio, 2);
+
+  // Calculate container-based scale if container width is provided
+  let containerScale = baseScale;
+  if (displayInfo?.containerWidth) {
+    // Target 95% of container width to allow for some margin taking account of the vertical scrollbar if it exists
+    const targetWidth = displayInfo.containerWidth * 0.95;
+
+    // Calculate scale needed to fit PDF width to target width
+    containerScale = targetWidth / pdfWidth;
+
+    // Consider height constraint if provided
+    if (displayInfo.containerHeight) {
+      const targetHeight = displayInfo.containerHeight * 0.95;
+      const heightScale = targetHeight / pdfHeight;
+
+      // Use the smaller scale to ensure entire page fits
+      containerScale = Math.min(containerScale, heightScale);
+    }
+
+    // Ensure containerScale is at least the minimum quality scale
+    containerScale = Math.max(containerScale, 1.0);
+  }
+
+  // Choose the higher scale between DPR-adjusted and container-based
+  // This ensures we get the best quality that fits the container
+  let candidateScale = Math.max(dprAdjustedScale, containerScale);
+
+  // Apply maxDimension constraint from config to prevent overly large images
+  const maxDimensionScale = config.maxDimension / Math.max(pdfWidth, pdfHeight);
+
+  // Ensure we don't exceed the maxDimension constraint
+  candidateScale = Math.min(candidateScale, maxDimensionScale);
+
+  // Set minimum scale to ensure quality doesn't drop too low
+  // Higher minimum for high-DPI displays
+  const minScale = pixelRatio > 1.5 ? 1.2 : 1.0;
+
+  // Ensure we never go below minimum scale
+  return Math.max(candidateScale, minScale);
+}

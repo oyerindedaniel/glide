@@ -14,6 +14,9 @@ const BASE_DELAY_MS = 100;
 
 const FILE_INPUT_TYPES = {
   IMAGE: "image/*",
+  JPEG: "image/jpeg",
+  PNG: "image/png",
+  WEBP: "image/webp",
   AUDIO: "audio/*",
   VIDEO: "video/*",
   PDF: "application/pdf",

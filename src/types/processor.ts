@@ -1,9 +1,10 @@
 export enum WorkerMessageType {
   InitPDF = "init-pdf",
-  PDFInitialized = "pfd-initialized",
   ProcessPage = "process-page",
   PageProcessed = "page-processed",
+  PDFInitialized = "pdf-initialized",
   Error = "error",
+  AbortProcessing = "abort-processing",
 }
 
 export interface PageProcessingConfig {

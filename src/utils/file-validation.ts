@@ -31,12 +31,6 @@ export function validateFile(
   file: File,
   allowedTypes: string[]
 ): { isValid: boolean; error?: string } {
-  // Check file size (e.g., 100MB limit)
-  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-  if (file.size > MAX_FILE_SIZE) {
-    return { isValid: false, error: "File size exceeds 100MB limit" };
-  }
-
   // Check filename length
   if (file.name.length > MAX_FILENAME_LENGTH) {
     return { isValid: false, error: "File name is too long" };
