@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { ProcessingStatus } from "@/store/processed-files";
+import { delay } from "@/utils/app";
 import { toast } from "sonner";
 
 // Constants for image size management
@@ -98,52 +99,56 @@ export class ImageBatchProcessor {
   public async processBatch(
     files: File[],
     callbacks: ImageProcessingCallbacks,
-    abortSignal: AbortSignal,
-    state: { totalPages: number; processedPages: number }
-  ): Promise<void> {
-    // Validate files first
+    abortSignal: AbortSignal
+  ) {
     const validation = this.validateFiles(files);
     if (!validation.isValid) {
       throw new Error(validation.error);
     }
 
-    // Update total count
+    const state = { totalPages: 0, processedPages: 0 };
+
     state.totalPages = files.length;
     callbacks.onTotalImagesUpdate(files.length);
 
-    // Process each image
-    for (const file of files) {
-      if (abortSignal.aborted) {
-        throw new Error("Processing aborted");
-      }
+    await delay(1000);
 
-      try {
-        callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
-        callbacks.onFileAdd(file.name, 1, { size: file.size, type: file.type });
-
-        const url = URL.createObjectURL(file);
-
-        // await new Promise((resolve) => setTimeout(resolve, 100));
-
+    try {
+      for (const file of files) {
         if (abortSignal.aborted) {
-          URL.revokeObjectURL(url);
           throw new Error("Processing aborted");
         }
 
-        callbacks.onImageProcessed(file.name, url, ProcessingStatus.COMPLETED);
-        callbacks.onFileStatus(file.name, ProcessingStatus.COMPLETED);
+        try {
+          callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
+          callbacks.onFileAdd(file.name, 1, {
+            size: file.size,
+            type: file.type,
+          });
 
-        state.processedPages++;
-        this.updateProgress(state.processedPages, state.totalPages);
-      } catch (error) {
-        if ((error as Error).message === "Processing aborted") {
+          const url = URL.createObjectURL(file);
+
+          if (abortSignal.aborted) {
+            URL.revokeObjectURL(url);
+            throw new Error("Processing aborted");
+          }
+
+          callbacks.onImageProcessed(
+            file.name,
+            url,
+            ProcessingStatus.COMPLETED
+          );
+          callbacks.onFileStatus(file.name, ProcessingStatus.COMPLETED);
+
+          state.processedPages++;
+          this.updateProgress(state.processedPages, state.totalPages);
+        } catch (error) {
+          callbacks.onFileStatus(file.name, ProcessingStatus.FAILED);
           throw error;
         }
-
-        console.error(`Failed to process image ${file.name}:`, error);
-        callbacks.onFileStatus(file.name, ProcessingStatus.FAILED);
-        callbacks.onImageProcessed(file.name, null, ProcessingStatus.FAILED);
       }
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -163,7 +168,5 @@ export class ImageBatchProcessor {
   /**
    * Clean up resources
    */
-  public cleanup(files: File[]) {
-    // cleanup logic here
-  }
+  public cleanup(files: File[]) {}
 }

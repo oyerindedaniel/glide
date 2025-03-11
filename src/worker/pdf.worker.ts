@@ -31,8 +31,8 @@ export type WorkerMessage =
       config: PageProcessingConfig;
       displayInfo?: {
         devicePixelRatio: number;
-        containerWidth: number; // The width of the container (75% of screen)
-        containerHeight?: number; // Optional container height
+        containerWidth: number;
+        containerHeight?: number;
       };
     }
   | {

@@ -214,8 +214,7 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
   /** Handles Image processing with batch processor */
   const processImages = useCallback(async function (
     files: File[],
-    abortSignal: AbortSignal,
-    state: { totalPages: number; processedPages: number }
+    abortSignal: AbortSignal
   ) {
     const batchProcessor = new ImageBatchProcessor({
       allowedImageTypes: ALLOWED_IMAGE_TYPES,
@@ -262,8 +261,7 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
             );
           },
         },
-        abortSignal,
-        state
+        abortSignal
       );
     } catch (error) {
       throw error;
@@ -334,7 +332,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
       abortControllerRef.current = new AbortController();
       const { signal: abortSignal } = abortControllerRef.current;
 
-      const state = { totalPages: 0, processedPages: 0 };
       const isPDF = fileTypes.has(FILE_INPUT_TYPES.PDF);
       const isImage =
         fileTypes.has(FILE_INPUT_TYPES.PNG) ||
@@ -358,7 +355,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
         url: string | null,
         status: ProcessingStatus
       ) {
-        state.processedPages++;
         if (status === ProcessingStatus.COMPLETED && url) {
           startTransition(() => {
             addPageToFile(fileName, pageNumber, url);
@@ -376,10 +372,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
         });
       };
 
-      const onTotalPagesUpdate = (pages: number) => {
-        state.totalPages += pages;
-      };
-
       fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
       fileProcessingEmitter.on(
         FILE_PROCESSING_EVENTS.FILE_STATUS,
@@ -389,17 +381,13 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
         FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
         onPageProcessed
       );
-      fileProcessingEmitter.on(
-        FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-        onTotalPagesUpdate
-      );
 
       const processPromise = new Promise<void>(async (resolve, reject) => {
         try {
           if (isPDF) {
             await processPdfs(sanitizedFiles, abortSignal);
           } else if (isImage) {
-            await processImages(sanitizedFiles, abortSignal, state);
+            await processImages(sanitizedFiles, abortSignal);
           } else {
             throw new Error("Invalid file type");
           }
@@ -422,10 +410,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
           fileProcessingEmitter.off(
             FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
             onPageProcessed
-          );
-          fileProcessingEmitter.off(
-            FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-            onTotalPagesUpdate
           );
         }
       });

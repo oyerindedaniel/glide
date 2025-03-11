@@ -36,9 +36,17 @@ export function validateFile(
     return { isValid: false, error: "File name is too long" };
   }
 
-  // Check for safe characters in filename
+  // Check for safe characters in filename and identify invalid ones
   if (!FILENAME_SAFE_REGEX.test(file.name)) {
-    return { isValid: false, error: "File name contains invalid characters" };
+    const invalidChars =
+      file.name.replace(/^.*[\\\/]/, "").match(/[^a-zA-Z0-9-_. ]/g) || [];
+
+    const uniqueInvalidChars = [...new Set(invalidChars)].join(" ");
+
+    return {
+      isValid: false,
+      error: `File name contains invalid characters: "${uniqueInvalidChars}". Only letters, numbers, spaces, dash (-), underscore (_), and period (.) are allowed.`,
+    };
   }
 
   // Validate file type
