@@ -173,9 +173,9 @@ export class ScrollReaderMode extends BaseReaderMode {
 
     let targetId: string | null = null;
     if (direction === "upward" && currentIndex > 0) {
-      targetId = pageIds[currentIndex - 1];
+      targetId = pageIds[currentIndex - 1]; // Previous page
     } else if (direction === "downward" && currentIndex < pageIds.length - 1) {
-      targetId = pageIds[currentIndex + 1];
+      targetId = pageIds[currentIndex + 1]; // Next page
     }
 
     if (!targetId) return;
@@ -192,10 +192,12 @@ export class ScrollReaderMode extends BaseReaderMode {
     const targetHeight = targetRect.height;
     const targetTop = targetPlaceholder.offsetTop;
 
-    const scrollTarget =
-      direction === "upward"
-        ? targetTop + targetHeight - viewportHeight
-        : targetTop;
+    let scrollTarget: number;
+    if (direction === "upward") {
+      scrollTarget = targetTop + targetHeight - viewportHeight; // Bottom of previous page
+    } else {
+      scrollTarget = targetTop; // Top of next page
+    }
 
     this.parentRef.scrollTo({
       top: scrollTarget,
@@ -242,12 +244,18 @@ export class ScrollReaderMode extends BaseReaderMode {
     }
   }
 
-  determineCurrentPage(): string | null {
+  /**
+   * Determines the current page based on the scroll position using binary search.
+   * @returns The ID of the current page.
+   */
+  determineCurrentPage(): string {
+    // Update the sorted list if it's dirty
     if (this.getIsSortedListDirty()) {
       this.updateSortedPageIds();
     }
 
     const scrollTop = this.parentRef.scrollTop;
+
     let left = 0;
     let right = this.sortedPageIds.length - 1;
 
@@ -258,22 +266,27 @@ export class ScrollReaderMode extends BaseReaderMode {
       const elTop = el.offsetTop;
       const elBottom = elTop + el.offsetHeight;
 
+      // Check if the scroll position is within this page's bounds
       if (elTop <= scrollTop && elBottom > scrollTop) {
         return pageId;
-      } else if (elTop > scrollTop) {
+      }
+      // If the page starts after the scroll position, look in the left half
+      else if (elTop > scrollTop) {
         right = mid - 1;
-      } else {
+      }
+      // If the page ends before the scroll position, look in the right half
+      else {
         left = mid + 1;
       }
     }
 
-    if (this.sortedPageIds.length === 0) return null;
-
+    // Handle edge cases
     if (left === 0) {
-      return this.sortedPageIds[0];
+      return this.sortedPageIds[0]; // Scroll is before the first page
     } else if (left >= this.sortedPageIds.length) {
-      return this.sortedPageIds[this.sortedPageIds.length - 1];
+      return this.sortedPageIds[this.sortedPageIds.length - 1]; // Scroll is after the last page
     } else {
+      // Scroll is between pages; pick the closest one
       const prevPage = this.sortedPageIds[left - 1];
       const nextPage = this.sortedPageIds[left];
       const prevEl = this.pageContainers.get(prevPage)!;
