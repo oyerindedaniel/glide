@@ -42,14 +42,7 @@ export default function Reader() {
 
   return (
     <div className="h-svh w-full">
-      <div
-        className="md:w-[75%] bg-[#0B0B0B] ease-in-out h-full w-full overflow-x-hidden overflow-y-auto transition-[width] duration-800 fixed top-0 left-0 z-10"
-        style={
-          {
-            "--reader-width": `${READER_WIDTH_PERCENT}%`,
-          } as React.CSSProperties
-        }
-      >
+      <div className="w-[var(--reader-width)] bg-[#0B0B0B] ease-in-out h-full overflow-x-hidden overflow-y-auto transition-[width] duration-800 fixed top-0 left-0 z-10">
         {allPages.length === 0 ? (
           <MangaEmptyState />
         ) : (
@@ -62,12 +55,7 @@ export default function Reader() {
         )}
       </div>
 
-      <div
-        className="bg-black p-3 lg:p-6 fixed right-0 top-0 z-5 h-svh"
-        style={{
-          width: `calc(100% - ${READER_WIDTH_PERCENT}%)`,
-        }}
-      >
+      <div className="w-[calc(100%_-_var(--reader-width))] bg-black p-3 lg:p-6 fixed right-0 top-0 z-5 h-svh">
         <MangaSidebar
           currentMode={viewMode}
           onViewModeChange={handleViewModeChange}

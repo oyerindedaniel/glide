@@ -146,9 +146,16 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
   );
 
   const getDisplayInfo = useCallback(() => {
+    const readerWidthPercent =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--reader-width"
+        )
+      ) || 75;
+
     return {
       devicePixelRatio: window.devicePixelRatio || 1,
-      containerWidth: window.innerWidth * (READER_WIDTH_PERCENT / 100),
+      containerWidth: window.innerWidth * (readerWidthPercent / 100),
       containerHeight: window.innerHeight,
     };
   }, []);
