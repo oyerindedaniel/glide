@@ -1,29 +1,32 @@
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
 import { memo } from "react";
-import { Maximize } from "lucide-react";
-import { Button } from "../ui/button";
+import { ViewMode } from "@/types/manga-reader";
+import { SidebarHeader } from "./sidebar-header";
+import { ViewModeSelector } from "./view-mode-selector";
+import { PanelControls } from "./panel-controls";
 
-export const MangaSidebar = memo(function MangaSidebar() {
+interface MangaSidebarProps {
+  currentMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+  onPanelControl: (action: "prev" | "next" | "play") => void;
+}
+
+export const MangaSidebar = memo(function MangaSidebar({
+  currentMode,
+  onViewModeChange,
+  onPanelControl,
+}: MangaSidebarProps) {
   return (
-    <div className="flex items-center justify-between gap-8">
-      <Button className="" size="icon" variant="ghost">
-        <Maximize aria-hidden />
-        <span className="sr-only">Maximize screen</span>
-      </Button>
-      <Link className="cursor-pointer" href="/">
-        <Image
-          className="w-24"
-          src="/manga-glide.svg"
-          alt="logo"
-          width={133}
-          height={30}
-          unoptimized
-          priority
-        />
-      </Link>
+    <div className="flex flex-col gap-4 justify-between h-full">
+      <SidebarHeader />
+      <ViewModeSelector
+        currentMode={currentMode}
+        onViewModeChange={onViewModeChange}
+      />
+      {currentMode === ViewMode.PANEL && (
+        <PanelControls onPanelControl={onPanelControl} />
+      )}
     </div>
   );
 });

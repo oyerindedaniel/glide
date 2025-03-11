@@ -24,6 +24,15 @@ type WorkerMessage =
       height: number;
     }
   | { type: WorkerMessageType.RENDER_PAGE; pageId: string }
+  | {
+      type: WorkerMessageType.RENDER_PANEL;
+      pageId: string;
+      panelData: {
+        src: { x: number; y: number; width: number; height: number };
+        dest: { x: number; y: number; width: number; height: number };
+        text?: string;
+      };
+    }
   | { type: WorkerMessageType.CLEAR_CACHE }
   | { type: WorkerMessageType.TERMINATE }
   | { type: WorkerMessageType.RENDERED; pageId: string }
@@ -82,6 +91,63 @@ function renderPage(page: CachedPage): void {
   const y = (canvas.height - scaledHeight) / 2;
 
   ctx.drawImage(page.bitmap!, x, y, scaledWidth, scaledHeight);
+}
+
+function renderPanel(
+  pageId: string,
+  panelData: {
+    src: { x: number; y: number; width: number; height: number };
+    dest: { x: number; y: number; width: number; height: number };
+    text?: string;
+  }
+): void {
+  const page = pageCache.get(pageId);
+  if (!page || !page.bitmap) {
+    self.postMessage({
+      type: WorkerMessageType.ERROR,
+      error: `Cannot render panel for page ${pageId}: page not found or bitmap not loaded`,
+    });
+    return;
+  }
+
+  if (!ctx) {
+    self.postMessage({
+      type: WorkerMessageType.ERROR,
+      error: "Canvas context not initialized",
+    });
+    return;
+  }
+
+  const { src, dest, text } = panelData;
+
+  // Clear canvas
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  // Draw panel
+  ctx.drawImage(
+    page.bitmap,
+    src.x,
+    src.y,
+    src.width,
+    src.height,
+    dest.x,
+    dest.y,
+    dest.width,
+    dest.height
+  );
+
+  // Render text if provided
+  if (text) {
+    ctx.font = "16px Arial";
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 3;
+    ctx.strokeText(text, dest.x, dest.y + dest.height);
+    ctx.fillText(text, dest.x, dest.y + dest.height);
+  }
+
+  self.postMessage({ type: WorkerMessageType.RENDERED, pageId });
+  page.lastAccessed = Date.now();
 }
 
 self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
@@ -151,6 +217,10 @@ self.addEventListener("message", async (event: MessageEvent<WorkerMessage>) => {
         }
         break;
       }
+
+      case WorkerMessageType.RENDER_PANEL:
+        renderPanel(event.data.pageId, event.data.panelData);
+        break;
 
       case WorkerMessageType.CLEAR_CACHE: {
         pageCache.forEach((page) => page.bitmap?.close());

@@ -1,40 +1,43 @@
+import { PanelData } from "@/types/manga-reader";
+import { MangaPage } from "@/types/manga-reader";
+import { ViewMode } from "@/types/manga-reader";
 import { ProcessingStatus } from "@/store/processed-files";
+import { BaseReaderMode } from "./manga-reader-modes/base-reader-mode";
+import { ScrollReaderMode } from "./manga-reader-modes/scroll-reader-mode";
+import { PanelReaderMode } from "./manga-reader-modes/panel-reader-mode";
+import { PanelAnimator, AnimationFrame } from "./panel/panel-animator";
 import { WorkerMessageType } from "@/types/renderer";
-import { debounce } from "@/utils/app";
 
 const BUFFER_SIZE = 3; // Number of pages to load at a time
-const PRELOAD_AHEAD = 2; // Number of pages to preload ahead
-const RENDER_QUALITY = 1.0;
-const DEFAULT_ASPECT_RATIO = 1.5; // Default for initial placeholder heights
+export const PRELOAD_AHEAD = 2; // Number of pages to preload ahead
 
 class MangaReaderRenderer {
   private canvas: HTMLCanvasElement;
   private context: CanvasRenderingContext2D | null = null;
   private worker: Worker | null = null;
-  private observer: IntersectionObserver;
   private pageContainers: Map<string, HTMLDivElement> = new Map();
-  private sortedPageIds: string[] = [];
-  private isSortedListDirty: boolean = true;
   private loadedPages: Set<string> = new Set();
   private loadingQueueInProgress: Set<string> = new Set();
   private currentPageId: string | null = null;
-  private visiblePages: Set<string> = new Set();
   private loadingQueue: string[] = [];
   private parentRef: HTMLElement;
   private pageDimensions: Map<string, { width: number; height: number }> =
     new Map();
   private resizeHandler: () => void;
   private scrollHandler: () => void;
-  private transitionTimeout: ReturnType<typeof setTimeout> | null = null;
-  private rfa: ReturnType<typeof requestAnimationFrame> | null = null;
-  private lastTransition: string | null = null;
-  private lastScrollTop: number = 0;
+  private scrollRaf: ReturnType<typeof requestAnimationFrame> | null = null;
   private imageCache: Map<string, HTMLImageElement> = new Map();
   private lastCanvas: { width: number; height: number } = {
     width: 0,
     height: 0,
   };
-  private throttledScrollHandler: () => void;
+  private currentMode: BaseReaderMode;
+  private currentViewMode: ViewMode = ViewMode.SCROLL;
+  private isSortedListDirty: boolean = true;
+  private animator: PanelAnimator;
+  private animationFrames: AnimationFrame[] = [];
+  private currentFrameIndex: number = 0;
+  private animationRaf: number | null = null;
 
   constructor(canvasContainer: HTMLElement = document.body) {
     this.parentRef = canvasContainer;
@@ -43,23 +46,12 @@ class MangaReaderRenderer {
     this.canvas = document.createElement("canvas");
     this.canvas.className = "manga-reader-canvas";
     this.canvas.style.boxSizing = "border-box";
-    this.canvas.style.position = "sticky";
     this.canvas.style.top = "0";
     this.canvas.style.left = "0";
     this.canvas.style.zIndex = "1";
     this.canvas.style.transform = "translate3d(0, 0, 0)";
     this.canvas.style.willChange = "transform";
     this.parentRef.appendChild(this.canvas);
-
-    // Intersection Observer with tight rootMargin for center page detection
-    this.observer = new IntersectionObserver(
-      this.debouncedHandleIntersection.bind(this),
-      {
-        root: null,
-        rootMargin: "0px",
-        threshold: [0, 0.5, 1],
-      }
-    );
 
     // Initialize rendering backend
     if (window.OffscreenCanvas && window.Worker) {
@@ -68,13 +60,22 @@ class MangaReaderRenderer {
       this.context = this.canvas.getContext("2d", { alpha: false });
     }
 
-    this.throttledScrollHandler = this.throttle(() => {
-      const newCurrentPage = this.determineCurrentPage();
-      if (newCurrentPage !== this.currentPageId && newCurrentPage) {
-        console.log("New current page:", newCurrentPage);
-        this.renderVisiblePage(newCurrentPage);
-      }
-    }, 100);
+    this.currentViewMode = ViewMode.SCROLL;
+    this.currentMode = new ScrollReaderMode({
+      canvas: this.canvas,
+      pageContainers: this.pageContainers,
+      isSortedListDirty: () => this.isSortedListDirty,
+      currentPageId: () => this.currentPageId,
+      pageDimensions: this.pageDimensions,
+      setIsSortedListDirty: (isDirty: boolean) =>
+        (this.isSortedListDirty = isDirty),
+      parentRef: this.parentRef,
+      handlers: this.getHandlers(),
+    });
+
+    this.currentMode.initialize();
+
+    this.animator = new PanelAnimator();
 
     // Event handlers
     this.resizeHandler = this.handleResize.bind(this);
@@ -144,8 +145,7 @@ class MangaReaderRenderer {
       this.lastCanvas.width !== containerWidth ||
       this.lastCanvas.height !== newHeight
     ) {
-      this.lastCanvas.width = containerWidth;
-      this.lastCanvas.height = newHeight;
+      this.lastCanvas = { width: containerWidth, height: newHeight };
       if (this.worker) {
         this.worker.postMessage({
           type: WorkerMessageType.RESIZE,
@@ -158,178 +158,122 @@ class MangaReaderRenderer {
       }
     }
 
-    // Update all placeholder heights
-    this.pageContainers.forEach((pageEl, pageId) => {
-      const dimensions = this.pageDimensions.get(pageId);
-      if (dimensions) {
-        const placeholderHeight = this.getHeightFromAspectRatio(
-          containerWidth,
-          dimensions
-        );
-        pageEl.style.height = `${placeholderHeight}px`;
-      }
-    });
-
     this.isSortedListDirty = true;
-    this.throttledScrollHandler();
+
+    this.currentMode.handleResize();
   }
 
   private handleScroll(): void {
-    if (this.rfa) cancelAnimationFrame(this.rfa);
-    this.rfa = requestAnimationFrame(() => {
-      this.throttledScrollHandler();
+    if (this.scrollRaf) cancelAnimationFrame(this.scrollRaf);
+    this.scrollRaf = requestAnimationFrame(() => {
+      this.currentMode.handleScroll();
+    });
+  }
 
-      if (!this.currentPageId) return;
-      const placeholder = this.pageContainers.get(this.currentPageId);
-      if (!placeholder) return;
+  private determineCurrentPage(): string | null {
+    return this.currentMode.determineCurrentPage();
+  }
 
-      const rect = placeholder.getBoundingClientRect();
-      const offsetY = rect.top;
-      const canvasHeight = this.canvas.height;
-      const viewportHeight = window.innerHeight;
-      const maxOffset =
-        canvasHeight > viewportHeight ? -(canvasHeight - viewportHeight) : 0;
+  private checkVisiblePages(): void {
+    this.currentMode.checkVisiblePages();
+  }
 
-      const currentScrollTop = this.parentRef.scrollTop;
-      const scrollDirection =
-        currentScrollTop > this.lastScrollTop ? "down" : "up";
-      this.lastScrollTop = currentScrollTop;
+  private renderVisiblePage(pageId: string): void {
+    if (pageId === this.currentPageId) return;
 
-      const FLOATING_POINT = 2; // due to floating-point precision or rapid scrolling
+    const pageToRender = this.currentMode.renderPage(pageId);
 
-      let translateY = 0;
-      if (canvasHeight > viewportHeight) {
-        if (offsetY < 0) {
-          // Scrolling down within the current page
-          translateY = Math.max(offsetY, maxOffset);
-          if (
-            translateY - FLOATING_POINT <= maxOffset &&
-            scrollDirection === "down"
-          ) {
-            this.handleOffsetCapping("downward");
-          }
-        } else if (offsetY > 0) {
-          // Scrolling up within the current page
-          translateY = Math.min(offsetY, 0);
-          if (translateY - FLOATING_POINT <= 0 && scrollDirection === "up") {
-            this.handleOffsetCapping("upward");
-          }
+    if (!pageToRender || pageId !== pageToRender) return;
+
+    this.currentPageId = pageId;
+
+    const dimensions = this.pageDimensions.get(pageId);
+    if (!dimensions) return;
+
+    const containerWidth = Math.floor(
+      this.parentRef.clientWidth || window.innerWidth
+    );
+    const newHeight = this.getHeightFromAspectRatio(containerWidth, dimensions);
+
+    if (
+      this.lastCanvas.width !== containerWidth ||
+      this.lastCanvas.height !== newHeight
+    ) {
+      this.lastCanvas = { width: containerWidth, height: newHeight };
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RESIZE,
+          width: containerWidth,
+          height: newHeight,
+        });
+      } else {
+        this.canvas.width = containerWidth;
+        this.canvas.height = newHeight;
+      }
+    }
+
+    // For Panel mode, handle panel rendering
+    if (
+      this.currentMode instanceof PanelReaderMode &&
+      this.hasLoadedPage(pageId)
+    ) {
+      const currentPanelIndex = (
+        this.currentMode as PanelReaderMode
+      ).getCurrentPanelIndex();
+      this.renderPanelToCanvas(pageId, currentPanelIndex);
+    }
+    // For Scroll mode or fallback, render the whole page
+    else if (this.hasLoadedPage(pageId)) {
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RENDER_PAGE,
+          pageId,
+        });
+      } else if (this.context) {
+        const scale = Math.min(
+          this.canvas.width / dimensions!.width,
+          this.canvas.height / dimensions!.height
+        );
+        const scaledWidth = dimensions!.width * scale;
+        const scaledHeight = dimensions!.height * scale;
+        const x = (this.canvas.width - scaledWidth) / 2;
+        const y = (this.canvas.height - scaledHeight) / 2;
+
+        const img = this.imageCache.get(pageId) || new Image();
+        if (!this.imageCache.has(pageId)) {
+          img.src = this.pageContainers.get(pageId)?.dataset.url || "";
+          img.onload = () => {
+            this.imageCache.set(pageId, img);
+            this.context?.drawImage(img, x, y, scaledWidth, scaledHeight);
+          };
+          img.onerror = () => {
+            console.error(`Failed to load image for page ${pageId}`);
+          };
+        } else {
+          this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          this.context.drawImage(img, x, y, scaledWidth, scaledHeight);
         }
       }
-
-      this.canvas.style.transition = "";
-      this.canvas.style.transform = `translate3d(0, ${translateY}px, 0)`;
-    });
+    }
   }
 
-  private handleOffsetCapping(direction: "upward" | "downward"): void {
-    if (!this.currentPageId) return;
-
-    const pageIds = Array.from(this.pageContainers.keys());
-    const currentIndex = pageIds.indexOf(this.currentPageId);
-    if (currentIndex === -1) return;
-
-    let targetId: string | null = null;
-    if (direction === "upward" && currentIndex > 0) {
-      targetId = pageIds[currentIndex - 1]; // Previous page
-    } else if (direction === "downward" && currentIndex < pageIds.length - 1) {
-      targetId = pageIds[currentIndex + 1]; // Next page
-    }
-
-    if (!targetId) return;
-
-    const transitionKey = `${this.currentPageId}_to_${targetId}_${direction}`;
-
-    if (this.lastTransition === transitionKey) {
-      return;
-    }
-
-    this.lastTransition = transitionKey;
-
-    const targetPlaceholder = this.pageContainers.get(targetId);
-    if (!targetPlaceholder) return;
-
-    const viewportHeight = window.innerHeight;
-    const targetRect = targetPlaceholder.getBoundingClientRect();
-    const targetHeight = targetRect.height;
-    const targetTop = targetPlaceholder.offsetTop;
-
-    let scrollTarget: number;
-    if (direction === "upward") {
-      scrollTarget = targetTop + targetHeight - viewportHeight; // Bottom of previous page
-    } else {
-      scrollTarget = targetTop; // Top of next page
-    }
-
-    console.log({ targetId, scrollTarget, direction });
-
-    this.parentRef.scrollTo({
-      top: scrollTarget,
-      behavior: "smooth",
-    });
-  }
-
-  public render(
-    allPages: Array<{
-      fileName: string;
-      pageNumber: number;
-      url: string;
-      status: ProcessingStatus;
-    }>
-  ): void {
+  public render(allPages: MangaPage[]): void {
     this.pageContainers.clear();
     this.loadedPages.clear();
-    this.visiblePages.clear();
 
-    const scrollContainer = document.createElement("div");
-    scrollContainer.className = "manga-scroll-container";
-    scrollContainer.style.position = "absolute";
-    scrollContainer.style.top = "0";
-    scrollContainer.style.left = "0";
-    scrollContainer.style.width = "100%";
-    scrollContainer.style.height = "auto";
-    scrollContainer.style.zIndex = "-1";
-    scrollContainer.style.visibility = "hidden";
-    this.parentRef.appendChild(scrollContainer);
+    this.currentMode.render(allPages);
 
-    const containerWidth = this.parentRef.clientWidth || window.innerWidth;
-    const defaultHeight = containerWidth * DEFAULT_ASPECT_RATIO;
-
-    allPages.forEach(({ fileName, pageNumber, url, status }) => {
-      const pageId = `${fileName}_${pageNumber}`;
-      const pageEl = document.createElement("div");
-      pageEl.id = `page-${pageId}`;
-      pageEl.dataset.pageId = pageId;
-      pageEl.dataset.url = url || "";
-      pageEl.dataset.status = status;
-      pageEl.className = "manga-page-placeholder";
-      pageEl.style.height = `${defaultHeight}px`;
-      pageEl.style.width = "100%";
-
-      scrollContainer.appendChild(pageEl);
-      this.pageContainers.set(pageId, pageEl);
-      this.observer.observe(pageEl);
-    });
-
+    // Common operations for both modes
     this.isSortedListDirty = true;
     this.preloadInitialPages(allPages);
     this.processLoadingQueue();
     this.checkVisiblePages();
   }
 
-  private preloadInitialPages(
-    allPages: Array<{
-      fileName: string;
-      pageNumber: number;
-      url: string;
-      status: ProcessingStatus;
-    }>
-  ): void {
+  private preloadInitialPages(allPages: MangaPage[]): void {
     const initialPages = allPages
       .filter(({ status, url }) => status === ProcessingStatus.COMPLETED && url)
       .slice(0, BUFFER_SIZE + PRELOAD_AHEAD);
-
-    console.log({ initialPages });
 
     initialPages.forEach(({ fileName, pageNumber, url }) => {
       const pageId = `${fileName}_${pageNumber}`;
@@ -337,43 +281,17 @@ class MangaReaderRenderer {
     });
   }
 
-  private debouncedHandleIntersection = debounce(
-    this.handleIntersection.bind(this),
-    100
-  );
-
-  private handleIntersection(entries: IntersectionObserverEntry[]): void {
-    let shouldProcessQueue = false;
-
-    entries.forEach((entry) => {
-      const pageEl = entry.target as HTMLDivElement;
-      const pageId = pageEl.dataset.pageId;
-      const url = pageEl.dataset.url || "";
-      const status = pageEl.dataset.status as ProcessingStatus;
-
-      if (!pageId) return;
-
-      if (entry.isIntersecting) {
-        if (!this.visiblePages.has(pageId)) {
-          this.visiblePages.add(pageId);
-          if (
-            this.needsLoad(pageId) &&
-            status === ProcessingStatus.COMPLETED &&
-            url
-          ) {
-            this.enqueuePageLoad(pageId, url);
-            this.preloadNextPages(pageId);
-            shouldProcessQueue = true;
-          }
-        }
-      } else {
-        this.visiblePages.delete(pageId);
+  private hasLoadedPage(pageId: string): boolean {
+    const isLoaded = this.loadedPages.has(pageId);
+    if (!isLoaded && this.needsLoad(pageId)) {
+      const pageEl = this.pageContainers.get(pageId);
+      const url = pageEl?.dataset.url;
+      if (url) {
+        this.enqueuePageLoad(pageId, url);
+        this.processLoadingQueue();
       }
-    });
-
-    if (shouldProcessQueue) {
-      this.processLoadingQueue();
     }
+    return isLoaded;
   }
 
   private needsLoad(pageId: string): boolean {
@@ -384,6 +302,7 @@ class MangaReaderRenderer {
     );
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private enqueuePageLoad(pageId: string, url: string): void {
     if (!this.needsLoad(pageId)) {
       console.log(`Page ${pageId} already loaded or in progress, skipping.`);
@@ -397,49 +316,6 @@ class MangaReaderRenderer {
       this.loadingQueue = this.loadingQueue.slice(-BUFFER_SIZE * 2);
     }
   }
-
-  private preloadNextPages(currentPageId: string): void {
-    const allPageIds = Array.from(this.pageContainers.keys());
-    const currentIndex = allPageIds.indexOf(currentPageId);
-    if (currentIndex === -1) return;
-
-    for (let i = 1; i <= PRELOAD_AHEAD; i++) {
-      const nextIndex = currentIndex + i;
-      if (nextIndex >= allPageIds.length) break;
-
-      const nextPageId = allPageIds[nextIndex];
-      const pageEl = this.pageContainers.get(nextPageId);
-      if (pageEl && !this.loadedPages.has(nextPageId)) {
-        const url = pageEl.dataset.url || "";
-        const status = pageEl.dataset.status as ProcessingStatus;
-        if (status === ProcessingStatus.COMPLETED && url) {
-          this.enqueuePageLoad(nextPageId, url);
-        }
-      }
-    }
-  }
-
-  // private async processLoadingQueue(): Promise<void> {
-  //   const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
-  //   console.log("Processing loading queue:", toProcess);
-  //   this.loadingQueue = this.loadingQueue.filter(
-  //     (id) => !toProcess.includes(id)
-  //   );
-
-  //   for (const pageId of toProcess) {
-  //     if (this.loadedPages.has(pageId)) continue;
-
-  //     const pageEl = this.pageContainers.get(pageId);
-  //     if (!pageEl) continue;
-  //     const url = pageEl.dataset.url;
-  //     if (!url) continue;
-  //     try {
-  //       await this.loadAndCacheImage(pageId, url);
-  //     } catch (err) {
-  //       console.error(`Failed to load image for page ${pageId}:`, err);
-  //     }
-  //   }
-  // }
 
   private async processLoadingQueue(): Promise<void> {
     const toProcess = this.loadingQueue.slice(0, BUFFER_SIZE);
@@ -488,16 +364,18 @@ class MangaReaderRenderer {
           const dimensions = { width: img.width, height: img.height };
           this.pageDimensions.set(pageId, dimensions);
 
-          // Update placeholder height
-          const containerWidth =
-            this.parentRef.clientWidth || window.innerWidth;
-          const placeholderHeight = this.getHeightFromAspectRatio(
-            containerWidth,
-            dimensions
-          );
-          const pageEl = this.pageContainers.get(pageId);
-          if (pageEl) {
-            pageEl.style.height = `${placeholderHeight}px`;
+          if (this.currentViewMode === ViewMode.SCROLL) {
+            // Update placeholder height
+            const containerWidth =
+              this.parentRef.clientWidth || window.innerWidth;
+            const placeholderHeight = this.getHeightFromAspectRatio(
+              containerWidth,
+              dimensions
+            );
+            const pageEl = this.pageContainers.get(pageId);
+            if (pageEl) {
+              pageEl.style.height = `${placeholderHeight}px`;
+            }
           }
 
           if (this.worker) {
@@ -520,213 +398,20 @@ class MangaReaderRenderer {
         img.src = url;
       });
     } finally {
-      this.loadingQueueInProgress.delete(pageId);
+      setTimeout(() => {
+        this.loadingQueueInProgress.delete(pageId);
+      }, 1000);
     }
   }
 
   private onPageRendered(pageId: string): void {
     this.loadedPages.add(pageId);
-    if (this.visiblePages.has(pageId)) {
+    if (this.currentMode.visiblePages.has(pageId)) {
       const currentPage = this.determineCurrentPage();
-
-      if (currentPage === pageId) {
+      if (currentPage === pageId && currentPage !== this.currentPageId) {
         this.renderVisiblePage(pageId);
       }
     }
-  }
-
-  private renderVisiblePage(currentPage: string): void {
-    const visibleLoadedPages = Array.from(this.visiblePages).filter((pageId) =>
-      this.loadedPages.has(pageId)
-    );
-    if (visibleLoadedPages.length === 0) return;
-
-    if (currentPage === this.currentPageId) return;
-
-    // Determine scroll direction
-    const allPageIds = Array.from(this.pageContainers.keys());
-    const oldIndex = this.currentPageId
-      ? allPageIds.indexOf(this.currentPageId)
-      : -1;
-    const newIndex = allPageIds.indexOf(currentPage);
-
-    let initialTranslateY = 0;
-    if (oldIndex !== -1 && newIndex < oldIndex) {
-      // Scrolling up to previous page
-      const dimensions = this.pageDimensions.get(currentPage);
-      if (dimensions) {
-        const containerWidth = Math.floor(
-          this.parentRef.clientWidth || window.innerWidth
-        );
-        const canvasHeight = this.getHeightFromAspectRatio(
-          containerWidth,
-          dimensions
-        );
-        const viewportHeight = window.innerHeight;
-        if (canvasHeight > viewportHeight) {
-          initialTranslateY = -(canvasHeight - viewportHeight); // Show bottom
-        }
-      }
-    } // Else scrolling down, keep initialTranslateY = 0 to show top
-
-    this.currentPageId = currentPage;
-
-    this.canvas.style.transition = "transform 0.6s ease";
-    this.canvas.style.transform = `translate3d(0, ${initialTranslateY}px, 0)`;
-
-    if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
-    this.transitionTimeout = setTimeout(() => {
-      this.canvas.style.transition = "";
-    }, 600);
-
-    const dimensions = this.pageDimensions.get(currentPage);
-    if (dimensions) {
-      const containerWidth = Math.floor(
-        this.parentRef.clientWidth || window.innerWidth
-      );
-      const newHeight = this.getHeightFromAspectRatio(
-        containerWidth,
-        dimensions
-      );
-
-      if (
-        this.lastCanvas.width !== containerWidth ||
-        this.lastCanvas.height !== newHeight
-      ) {
-        this.lastCanvas.width = containerWidth;
-        this.lastCanvas.height = newHeight;
-        if (this.worker) {
-          this.worker.postMessage({
-            type: WorkerMessageType.RESIZE,
-            width: containerWidth,
-            height: newHeight,
-          });
-        } else {
-          this.canvas.width = containerWidth;
-          this.canvas.height = newHeight;
-        }
-      }
-    }
-
-    if (this.worker) {
-      this.worker.postMessage({
-        type: WorkerMessageType.RENDER_PAGE,
-        pageId: currentPage,
-      });
-    } else if (this.context) {
-      const scale = Math.min(
-        this.canvas.width / dimensions!.width,
-        this.canvas.height / dimensions!.height
-      );
-      const scaledWidth = dimensions!.width * scale;
-      const scaledHeight = dimensions!.height * scale;
-      const x = (this.canvas.width - scaledWidth) / 2;
-      const y = (this.canvas.height - scaledHeight) / 2;
-
-      const img = this.imageCache.get(currentPage) || new Image();
-      if (!this.imageCache.has(currentPage)) {
-        img.src = this.pageContainers.get(currentPage)?.dataset.url || "";
-        img.onload = () => {
-          this.imageCache.set(currentPage, img);
-          this.context?.drawImage(img, x, y, scaledWidth, scaledHeight);
-        };
-        img.onerror = () => {
-          console.error(`Failed to load image for page ${currentPage}`);
-        };
-      } else {
-        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        this.context.drawImage(img, x, y, scaledWidth, scaledHeight);
-      }
-    }
-  }
-
-  /**
-   * Updates the sorted list of page IDs based on their offsetTop values.
-   */
-  private updateSortedPageIds(): void {
-    this.sortedPageIds = Array.from(this.pageContainers.keys()).sort((a, b) => {
-      const elA = this.pageContainers.get(a)!;
-      const elB = this.pageContainers.get(b)!;
-      return elA.offsetTop - elB.offsetTop;
-    });
-    this.isSortedListDirty = false;
-  }
-
-  /**
-   * Determines the current page based on the scroll position using binary search.
-   * @returns The ID of the current page.
-   */
-  private determineCurrentPage(): string {
-    // Update the sorted list if it's dirty
-    if (this.isSortedListDirty) {
-      this.updateSortedPageIds();
-    }
-
-    const scrollTop = this.parentRef.scrollTop;
-
-    let left = 0;
-    let right = this.sortedPageIds.length - 1;
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2);
-      const pageId = this.sortedPageIds[mid];
-      const el = this.pageContainers.get(pageId)!;
-      const elTop = el.offsetTop;
-      const elBottom = elTop + el.offsetHeight;
-
-      // Check if the scroll position is within this page's bounds
-      if (elTop <= scrollTop && elBottom > scrollTop) {
-        return pageId;
-      }
-      // If the page starts after the scroll position, look in the left half
-      else if (elTop > scrollTop) {
-        right = mid - 1;
-      }
-      // If the page ends before the scroll position, look in the right half
-      else {
-        left = mid + 1;
-      }
-    }
-
-    // Handle edge cases
-    if (left === 0) {
-      return this.sortedPageIds[0]; // Scroll is before the first page
-    } else if (left >= this.sortedPageIds.length) {
-      return this.sortedPageIds[this.sortedPageIds.length - 1]; // Scroll is after the last page
-    } else {
-      // Scroll is between pages; pick the closest one
-      const prevPage = this.sortedPageIds[left - 1];
-      const nextPage = this.sortedPageIds[left];
-      const prevEl = this.pageContainers.get(prevPage)!;
-      const prevBottom = prevEl.offsetTop + prevEl.offsetHeight;
-      return scrollTop < prevBottom ? prevPage : nextPage;
-    }
-  }
-
-  private checkVisiblePages(): void {
-    const viewportHeight = window.innerHeight;
-    let shouldProcessQueue = false;
-
-    this.pageContainers.forEach((pageEl, pageId) => {
-      const rect = pageEl.getBoundingClientRect();
-      const isVisible = rect.top < viewportHeight && rect.bottom > 0;
-      if (isVisible) {
-        this.visiblePages.add(pageId);
-        if (this.needsLoad(pageId)) {
-          const url = pageEl.dataset.url || "";
-          const status = pageEl.dataset.status as ProcessingStatus;
-          if (status === ProcessingStatus.COMPLETED && url) {
-            this.enqueuePageLoad(pageId, url);
-            shouldProcessQueue = true;
-          }
-        }
-      }
-    });
-
-    if (shouldProcessQueue) {
-      this.processLoadingQueue();
-    }
-    this.throttledScrollHandler();
   }
 
   private pruneImageCache(): void {
@@ -738,30 +423,257 @@ class MangaReaderRenderer {
     toRemove.forEach((key) => this.imageCache.delete(key));
   }
 
-  private throttle(fn: () => void, delay: number): () => void {
-    let timeout: number | null = null;
-    return () => {
-      if (!timeout) {
-        timeout = window.setTimeout(() => {
-          fn();
-          timeout = null;
-        }, delay);
+  private renderPanelToCanvas(
+    pageId: string,
+    panelIndex: number,
+    animate: boolean = true
+  ): void {
+    const panels =
+      this.currentMode instanceof PanelReaderMode
+        ? this.currentMode.getPanelData(pageId)
+        : null;
+
+    if (!panels || !panels[panelIndex]) return;
+
+    const panel = panels[panelIndex];
+
+    // For animations, get previous panel if applicable
+    let previousPanel: PanelData | null = null;
+    if (animate && panelIndex > 0) {
+      previousPanel = panels[panelIndex - 1];
+    } else if (animate && panelIndex === 0) {
+      // If we're at the first panel and we need to animate, try to get the last panel from the previous page
+      if (this.currentMode instanceof PanelReaderMode) {
+        const prevPageId = this.currentMode.getPreviousPageId();
+        if (prevPageId) {
+          const prevPanels = this.currentMode.getPanelData(prevPageId);
+          if (prevPanels && prevPanels.length > 0) {
+            previousPanel = prevPanels[prevPanels.length - 1];
+          }
+        }
       }
+    }
+
+    if (this.animationRaf) {
+      cancelAnimationFrame(this.animationRaf);
+      this.animationRaf = null;
+    }
+
+    // Calculate animation frames
+    if (animate && previousPanel) {
+      this.animationFrames = this.animator.calculateAnimationFrames(
+        previousPanel,
+        panel,
+        this.canvas.width,
+        this.canvas.height
+      );
+      this.currentFrameIndex = 0;
+      this.animatePanel(pageId);
+    } else {
+      // No animation needed, just render the panel directly
+      const dimensions = this.animator.calculatePanelDimensions(
+        panel,
+        this.canvas.width,
+        this.canvas.height
+      );
+
+      if (this.worker) {
+        this.worker.postMessage({
+          type: WorkerMessageType.RENDER_PANEL,
+          pageId,
+          panelData: dimensions,
+        });
+      } else if (this.context) {
+        const img = this.imageCache.get(pageId);
+        if (!img) return;
+
+        const { src, dest, text } = dimensions;
+        this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.context.drawImage(
+          img,
+          src.x,
+          src.y,
+          src.width,
+          src.height,
+          dest.x,
+          dest.y,
+          dest.width,
+          dest.height
+        );
+
+        if (text) {
+          this.context.font = "16px Arial";
+          this.context.fillStyle = "white";
+          this.context.strokeStyle = "black";
+          this.context.lineWidth = 3;
+          this.context.strokeText(text, dest.x, dest.y + dest.height);
+          this.context.fillText(text, dest.x, dest.y + dest.height);
+        }
+      }
+    }
+  }
+
+  private animatePanel(pageId: string): void {
+    if (this.currentFrameIndex >= this.animationFrames.length) {
+      this.animationRaf = null;
+      return;
+    }
+
+    const frame = this.animationFrames[this.currentFrameIndex];
+    const img = this.imageCache.get(pageId);
+
+    if (this.worker) {
+      this.worker.postMessage({
+        type: WorkerMessageType.RENDER_PANEL,
+        pageId,
+        panelData: frame,
+      });
+    } else if (this.context && img) {
+      const { src, dest, text } = frame;
+      this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.context.drawImage(
+        img,
+        src.x,
+        src.y,
+        src.width,
+        src.height,
+        dest.x,
+        dest.y,
+        dest.width,
+        dest.height
+      );
+
+      if (text) {
+        this.context.font = "16px Arial";
+        this.context.fillStyle = "white";
+        this.context.strokeStyle = "black";
+        this.context.lineWidth = 3;
+        this.context.strokeText(text, dest.x, dest.y + dest.height);
+        this.context.fillText(text, dest.x, dest.y + dest.height);
+      }
+    }
+
+    this.currentFrameIndex++;
+    if (this.currentFrameIndex < this.animationFrames.length) {
+      this.animationRaf = requestAnimationFrame(() =>
+        this.animatePanel(pageId)
+      );
+    }
+  }
+
+  private getHandlers() {
+    return {
+      hasLoadedPage: this.hasLoadedPage.bind(this),
+      needsLoad: this.needsLoad.bind(this),
+      enqueuePageLoad: this.enqueuePageLoad.bind(this),
+      processLoadingQueue: this.processLoadingQueue.bind(this),
+      renderVisiblePage: this.renderVisiblePage.bind(this),
+      renderPanel: (
+        pageId: string,
+        panelIndex: number,
+        animate: boolean = true
+      ) => {
+        if (this.hasLoadedPage(pageId)) {
+          this.renderPanelToCanvas(pageId, panelIndex, animate);
+        }
+      },
     };
   }
 
+  public setViewMode(mode: ViewMode): void {
+    this.currentMode.cleanup();
+    this.currentViewMode = mode;
+
+    const modeParams = {
+      canvas: this.canvas,
+      pageContainers: this.pageContainers,
+      pageDimensions: this.pageDimensions,
+      parentRef: this.parentRef,
+      currentPageId: () => this.currentPageId,
+      isSortedListDirty: () => this.isSortedListDirty,
+      setIsSortedListDirty: (isDirty: boolean) =>
+        (this.isSortedListDirty = isDirty),
+      loadingHandlers: this.getHandlers(),
+    } as const;
+
+    if (mode === ViewMode.PANEL) {
+      this.currentMode = new PanelReaderMode(modeParams);
+    } else {
+      this.currentMode = new ScrollReaderMode(modeParams);
+    }
+
+    this.currentMode.initialize();
+  }
+
+  public getCurrentMode(): ViewMode {
+    return this.currentViewMode;
+  }
+
+  public nextPanel(): void {
+    if (this.currentMode instanceof PanelReaderMode) {
+      this.currentMode.nextPanel();
+    }
+  }
+
+  public previousPanel(): void {
+    if (this.currentMode instanceof PanelReaderMode) {
+      this.currentMode.previousPanel();
+    }
+  }
+
+  public jumpToPanel(panelIndex: number): void {
+    if (this.currentMode instanceof PanelReaderMode) {
+      this.currentMode.jumpToPanel(panelIndex);
+    }
+  }
+
+  public isNextPanel(): boolean {
+    return this.currentMode instanceof PanelReaderMode
+      ? this.currentMode.isNextPanel()
+      : false;
+  }
+
+  public isPreviousPanel(): boolean {
+    return this.currentMode instanceof PanelReaderMode
+      ? this.currentMode.isPreviousPanel()
+      : false;
+  }
+
+  public togglePlayback(): void {
+    if (this.currentMode instanceof PanelReaderMode) {
+      this.currentMode.togglePlayback();
+    }
+  }
+
   public dispose(): void {
-    this.observer.disconnect();
-    if (this.transitionTimeout) clearTimeout(this.transitionTimeout);
     if (this.worker) {
       this.worker.postMessage({ type: WorkerMessageType.TERMINATE });
       this.worker = null;
     }
     this.loadedPages.clear();
-    this.visiblePages.clear();
     this.pageContainers.clear();
     this.pageDimensions.clear();
     this.loadingQueue = [];
+
+    if (this.currentMode) {
+      this.currentMode.cleanup();
+    }
+
+    if (this.animationRaf) {
+      cancelAnimationFrame(this.animationRaf);
+      this.animationRaf = null;
+    }
+
+    if (this.animator) {
+      this.animator.dispose();
+    }
+
+    this.animationFrames = [];
+
+    if (this.scrollRaf) {
+      cancelAnimationFrame(this.scrollRaf);
+      this.scrollRaf = null;
+    }
 
     if (this.canvas.parentNode) {
       this.canvas.parentNode.removeChild(this.canvas);
