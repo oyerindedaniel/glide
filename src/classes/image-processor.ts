@@ -2,6 +2,7 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { delay } from "@/utils/app";
 import { toast } from "sonner";
+import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 
 // Constants for image size management
 const SIZE_LIMITS = {
@@ -22,7 +23,6 @@ export interface ImageProcessingCallbacks {
     url: string | null,
     status: ProcessingStatus
   ) => void;
-  onTotalImagesUpdate: (count: number) => void;
 }
 
 export interface FileValidationResult {
@@ -109,7 +109,6 @@ export class ImageBatchProcessor {
     const state = { totalPages: 0, processedPages: 0 };
 
     state.totalPages = files.length;
-    callbacks.onTotalImagesUpdate(files.length);
 
     await delay(1000);
 
@@ -120,10 +119,12 @@ export class ImageBatchProcessor {
         }
 
         try {
-          callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
-          callbacks.onFileAdd(file.name, 1, {
-            size: file.size,
-            type: file.type,
+          batchedUpdates(() => {
+            callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
+            callbacks.onFileAdd(file.name, 1, {
+              size: file.size,
+              type: file.type,
+            });
           });
 
           const url = URL.createObjectURL(file);
@@ -133,12 +134,14 @@ export class ImageBatchProcessor {
             throw new Error("Processing aborted");
           }
 
-          callbacks.onImageProcessed(
-            file.name,
-            url,
-            ProcessingStatus.COMPLETED
-          );
-          callbacks.onFileStatus(file.name, ProcessingStatus.COMPLETED);
+          batchedUpdates(() => {
+            callbacks.onImageProcessed(
+              file.name,
+              url,
+              ProcessingStatus.COMPLETED
+            );
+            callbacks.onFileStatus(file.name, ProcessingStatus.COMPLETED);
+          });
 
           state.processedPages++;
           this.updateProgress(state.processedPages, state.totalPages);

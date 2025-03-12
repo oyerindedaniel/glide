@@ -142,6 +142,12 @@ self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
         );
 
         // Create viewport with the calculated scale
+        const scale = Math.min(
+          config.maxDimension /
+            Math.max(originalViewport.width, originalViewport.height),
+          config.scale
+        );
+
         const viewport = page.getViewport({ scale: optimalScale });
 
         const canvasContext = canvasFactory.create(

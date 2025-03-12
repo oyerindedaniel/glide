@@ -6,7 +6,7 @@ import { delay } from "@/utils/app";
 import pLimit from "p-limit";
 import { toast } from "sonner";
 import { MAX_PAGE_RETRIES, BASE_DELAY_MS } from "@/constants/processing";
-import { unstable_batchedUpdates } from "react-dom";
+import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 
 // Constants for file size management
 const SIZE_LIMITS = {
@@ -455,11 +455,13 @@ export class PDFBatchProcessor {
         };
         abortSignal.addEventListener("abort", abortListener);
 
-        callbacks.onFileAdd(file.name, totalPages, {
-          size: file.size,
-          type: file.type,
+        batchedUpdates(() => {
+          callbacks.onFileAdd(file.name, totalPages, {
+            size: file.size,
+            type: file.type,
+          });
+          callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
         });
-        callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
 
         const pageResults = await this.processAllPagesWithRetry(
           file.name,

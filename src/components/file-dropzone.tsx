@@ -254,12 +254,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
               );
             }
           },
-          onTotalImagesUpdate: (count) => {
-            fileProcessingEmitter.emit(
-              FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-              count
-            );
-          },
         },
         abortSignal
       );
