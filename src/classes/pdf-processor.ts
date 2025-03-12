@@ -2,8 +2,11 @@
 import { ProcessingStatus } from "@/store/processed-files";
 import { WorkerMessageType } from "@/types/processor";
 import { PageProcessingConfig } from "@/types/processor";
+import { delay } from "@/utils/app";
 import pLimit from "p-limit";
 import { toast } from "sonner";
+import { MAX_PAGE_RETRIES, BASE_DELAY_MS } from "@/constants/processing";
+import { unstable_batchedUpdates } from "react-dom";
 
 // Constants for file size management
 const SIZE_LIMITS = {
@@ -21,14 +24,12 @@ interface ProcessingOptions {
     medium: PageProcessingConfig;
     large: PageProcessingConfig;
   };
-  maxRetries: number;
   onError?: (error: Error, pageNumber?: number) => void;
 }
 
 const DEFAULT_OPTIONS: ProcessingOptions = {
   maxConcurrent: 2,
   pageBufferSize: 5,
-  maxRetries: 3,
   processingConfigs: {
     small: {
       scale: 2.0,
@@ -418,7 +419,6 @@ export class PDFBatchProcessor {
         url: string | null,
         status: ProcessingStatus
       ) => void;
-      onTotalPagesUpdate: (pages: number) => void;
       displayInfo: {
         devicePixelRatio: number;
         containerWidth: number;
@@ -448,8 +448,6 @@ export class PDFBatchProcessor {
       const processor = new PDFProcessor(processorOptions, abortSignal);
 
       try {
-        callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
-
         const { totalPages } = await processor.processFile(file);
 
         const abortListener = () => {
@@ -461,7 +459,7 @@ export class PDFBatchProcessor {
           size: file.size,
           type: file.type,
         });
-        callbacks.onTotalPagesUpdate(totalPages);
+        callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
 
         const pageResults = await this.processAllPagesWithRetry(
           file.name,
@@ -563,9 +561,6 @@ export class PDFBatchProcessor {
     abortSignal: AbortSignal,
     failedPages: Map<string, { pageNumber: number; attempts: number }[]>
   ) {
-    const MAX_RETRIES = 3;
-    const BASE_DELAY_MS = 500;
-
     function isOnline() {
       return navigator.onLine;
     }
@@ -575,7 +570,7 @@ export class PDFBatchProcessor {
         failedPages.set(fileName, []);
       }
 
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
         if (abortSignal.aborted) {
           throw new Error("Processing aborted");
         }
@@ -591,7 +586,7 @@ export class PDFBatchProcessor {
                 { id: "is-online" }
               );
             }
-            await new Promise((r) => setTimeout(r, 5000));
+            await delay(5000);
             if (abortSignal.aborted) {
               throw new Error("Processing aborted");
             }
@@ -647,7 +642,7 @@ export class PDFBatchProcessor {
             pageRetries.push({ pageNumber, attempts: 1 });
           }
 
-          if (attempt === MAX_RETRIES) {
+          if (attempt === MAX_PAGE_RETRIES) {
             if (isProduction) {
               console.error(error);
             }
@@ -661,7 +656,7 @@ export class PDFBatchProcessor {
           }
 
           const delayTime = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-          await new Promise((r) => setTimeout(r, delayTime));
+          await delay(delayTime);
 
           if (abortSignal.aborted) {
             throw new Error("Processing aborted");

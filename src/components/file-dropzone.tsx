@@ -36,7 +36,6 @@ import { useShallow } from "zustand/shallow";
 import { sanitizeFileName, validateFile } from "@/utils/file-validation";
 import { PDFBatchProcessor } from "@/classes/pdf-processor";
 import { ImageBatchProcessor } from "@/classes/image-processor";
-import { READER_WIDTH_PERCENT } from "./pages/reader";
 
 const ALLOWED_IMAGE_TYPES = [
   FILE_INPUT_TYPES.PNG,
@@ -199,12 +198,6 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
                 status
               );
             },
-            onTotalPagesUpdate: (pages) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-                pages
-              );
-            },
             displayInfo: getDisplayInfo(),
           },
           abortSignal
@@ -351,9 +344,9 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
         totalPages: number,
         { size, type }: { size: number; type: string }
       ) => {
-        startTransition(() => {
-          addFile(fileName, totalPages, { size, type });
-        });
+        // startTransition(() => {
+        addFile(fileName, totalPages, { size, type });
+        // });
       };
 
       const onPageProcessed = function (

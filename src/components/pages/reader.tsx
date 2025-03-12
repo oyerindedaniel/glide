@@ -9,8 +9,6 @@ import { useState, useCallback, useRef } from "react";
 import { ViewMode } from "@/types/manga-reader";
 import { MangaReaderRenderer } from "@/classes/manga-reader-renderer";
 
-export const READER_WIDTH_PERCENT = 75;
-
 export default function Reader() {
   const allPages = useProcessedFilesStore(
     useShallow((state) => state.allPages)
