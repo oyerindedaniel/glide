@@ -7,18 +7,22 @@ import pLimit from "p-limit";
 import { toast } from "sonner";
 import { MAX_PAGE_RETRIES, BASE_DELAY_MS } from "@/constants/processing";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
+import { PDFWorkerPool } from "../worker/pdf.worker-pool";
+
+// Check if we're in a browser environment
+const isBrowser =
+  typeof window !== "undefined" && typeof Worker !== "undefined";
 
 // Constants for file size management
 const SIZE_LIMITS = {
   SINGLE_PDF_MAX_SIZE: 100 * 1024 * 1024, // 100MB
   BATCH_PDF_MAX_SIZE: 50 * 1024 * 1024, // 50MB
-  TOTAL_BATCH_MAX_SIZE: 250 * 1024 * 1024, // 250MB
-  MAX_FILES_IN_BATCH: 10,
+  TOTAL_BATCH_MAX_SIZE: 500 * 1024 * 1024, // 500MB
+  MAX_FILES_IN_BATCH: 10, // 10 files
 };
 
 interface ProcessingOptions {
-  maxConcurrent: number;
-  pageBufferSize: number;
+  pageProcessingSlots: number;
   processingConfigs: {
     small: PageProcessingConfig;
     medium: PageProcessingConfig;
@@ -28,8 +32,7 @@ interface ProcessingOptions {
 }
 
 const DEFAULT_OPTIONS: ProcessingOptions = {
-  maxConcurrent: 2,
-  pageBufferSize: 5,
+  pageProcessingSlots: 2,
   processingConfigs: {
     small: {
       scale: 2.0,
@@ -72,7 +75,7 @@ export interface FileValidationResult {
 
 // PDF Processor for individual files
 export class PDFProcessor {
-  private worker: Worker;
+  private worker?: Worker;
   private pageCache: Map<string, CacheItem>;
   private options: ProcessingOptions;
   private processingQueue: Array<{
@@ -90,41 +93,79 @@ export class PDFProcessor {
   private onError?: (error: Error, pageNumber?: number) => void;
   private fileSize: number = 0;
   private abortSignal?: AbortSignal;
+  private cacheCleanupInterval: NodeJS.Timeout | null = null;
+  private processingPages: Set<number> = new Set();
 
   constructor(
     options: Partial<ProcessingOptions> = {},
     abortSignal?: AbortSignal
   ) {
+    // In server-side rendering, create a stub processor
+    if (!isBrowser) {
+      this.options = { ...DEFAULT_OPTIONS, ...options };
+      this.onError = options.onError;
+      this.abortSignal = abortSignal;
+      this.pageCache = new Map();
+      this.processingQueue = [];
+      this.activeProcessing = 0;
+      this.processingConfig = this.options.processingConfigs.small;
+      return;
+    }
+
     this.options = { ...DEFAULT_OPTIONS, ...options };
     this.onError = options.onError;
     this.abortSignal = abortSignal;
 
-    this.worker = new Worker(
-      new URL("../worker/pdf.worker.ts", import.meta.url)
-    );
+    PDFWorkerPool.getInstance()
+      .getWorker()
+      .then((worker) => {
+        this.worker = worker;
+        this.setupWorkerMessageHandler();
+
+        worker.onerror = (event) => {
+          const error = new Error(`Worker error: ${event.message}`);
+          console.log(`Worker error: ${event.message}`);
+          this.onError?.(error);
+        };
+      })
+      .catch((error) => {
+        if (this.onError) {
+          this.onError(
+            new Error(`Failed to initialize worker: ${error.message}`)
+          );
+        }
+      });
+
     this.pageCache = new Map();
     this.processingQueue = [];
     this.activeProcessing = 0;
     this.processingConfig = this.options.processingConfigs.small;
 
-    this.setupWorkerMessageHandler();
     this.startCacheCleanupInterval();
 
     if (abortSignal) {
       abortSignal.addEventListener("abort", this.handleAbort.bind(this));
     }
-
-    this.worker.onerror = (event) => {
-      const error = new Error(`Worker error: ${event.message}`);
-      console.log(`Worker error: ${event.message}`);
-      this.onError?.(error);
-    };
   }
 
   private setupWorkerMessageHandler() {
+    if (!this.worker) return;
+
     this.worker.onmessage = (e) => {
+      // Add debugging for each message received
+      const msgId = Math.random().toString(36).substring(2, 8);
+      console.log(
+        `[${msgId}] PDFProcessor received message: ${e.data.type}, Page: ${
+          e.data.pageNumber || "N/A"
+        }`
+      );
+
       if (e.data.type === WorkerMessageType.PageProcessed) {
         const { pageNumber, blobData, dimensions } = e.data;
+        console.log(
+          `[${msgId}] Processing page ${pageNumber}, creating blob URL...`
+        );
+
         const blob = new Blob([blobData], { type: "image/webp" });
         const url = URL.createObjectURL(blob);
 
@@ -135,30 +176,66 @@ export class PDFProcessor {
           pageNumber,
         });
 
-        const queueItem = this.processingQueue.find(
+        // Find all queue items for this page
+        const queueItems = this.processingQueue.filter(
           (item) => item.pageNumber === pageNumber
         );
-        if (queueItem) {
-          queueItem.resolve({ url, dimensions, pageNumber });
+
+        if (queueItems.length > 0) {
+          console.log(
+            `[${msgId}] Found ${queueItems.length} queue items for page ${pageNumber}, resolving all...`
+          );
+
+          // Resolve all queue items for this page
+          queueItems.forEach((item) => {
+            item.resolve({ url, dimensions, pageNumber });
+          });
+
+          // Remove all resolved items from the queue
           this.processingQueue = this.processingQueue.filter(
             (item) => item.pageNumber !== pageNumber
           );
+        } else {
+          console.warn(
+            `[${msgId}] No queue items found for page ${pageNumber}!`
+          );
         }
 
+        // Clean up processing tracking
+        this.processingPages.delete(pageNumber);
         this.activeProcessing--;
+        console.log(
+          `[${msgId}] Active processing: ${
+            this.activeProcessing
+          }, Queue length: ${
+            this.processingQueue.length
+          }, Processing pages: ${Array.from(this.processingPages).join(", ")}`
+        );
         this.processNextInQueue();
       } else if (e.data.type === WorkerMessageType.Error) {
         const error = new Error(e.data.error);
         if (e.data.pageNumber !== undefined) {
-          const queueItem = this.processingQueue.find(
+          // Find all queue items for this page and reject them
+          const queueItems = this.processingQueue.filter(
             (item) => item.pageNumber === e.data.pageNumber
           );
-          if (queueItem) {
-            queueItem.reject(error);
+
+          if (queueItems.length > 0) {
+            console.log(
+              `Rejecting ${queueItems.length} queue items for page ${e.data.pageNumber} due to error`
+            );
+            queueItems.forEach((item) => {
+              item.reject(error);
+            });
+
+            // Remove all rejected items from the queue
             this.processingQueue = this.processingQueue.filter(
               (item) => item.pageNumber !== e.data.pageNumber
             );
           }
+
+          // Clean up processing tracking
+          this.processingPages.delete(e.data.pageNumber);
           this.activeProcessing--;
           this.onError?.(error, e.data.pageNumber);
         } else {
@@ -170,9 +247,9 @@ export class PDFProcessor {
   }
 
   private startCacheCleanupInterval() {
-    setInterval(() => {
+    this.cacheCleanupInterval = setInterval(() => {
       const now = Date.now();
-      const maxAge = 5 * 60 * 1000; // 5 minutes
+      const maxAge = 10 * 60 * 1000; // 10 minutes
 
       for (const [key, value] of this.pageCache.entries()) {
         if (now - value.lastAccessed > maxAge) {
@@ -193,17 +270,35 @@ export class PDFProcessor {
     return this.options.processingConfigs.small;
   }
 
-  private async processNextInQueue() {
-    if (
-      this.activeProcessing >= this.options.maxConcurrent ||
-      this.processingQueue.length === 0
-    ) {
+  private processNextInQueue() {
+    if (this.processingQueue.length === 0 || !this.worker) {
       return;
     }
 
-    const nextItem = this.processingQueue[0];
-    if (nextItem) {
+    // Process as many items as we have slots available
+    while (
+      this.activeProcessing < this.options.pageProcessingSlots &&
+      this.processingQueue.length > 0
+    ) {
+      // Find next page not currently being processed
+      const nextItemIndex = this.processingQueue.findIndex(
+        (item) => !this.processingPages.has(item.pageNumber)
+      );
+
+      // If no pages are available for processing, exit the loop
+      if (nextItemIndex === -1) break;
+
+      const nextItem = this.processingQueue[nextItemIndex];
+      // Mark this page as being processed but keep it in the queue
+      this.processingPages.add(nextItem.pageNumber);
+
       this.activeProcessing++;
+
+      // Log that we're starting to process this page
+      console.log(
+        `Starting to process page ${nextItem.pageNumber}, active: ${this.activeProcessing}, queue: ${this.processingQueue.length}`
+      );
+
       this.worker.postMessage({
         type: WorkerMessageType.ProcessPage,
         pageNumber: nextItem.pageNumber,
@@ -214,20 +309,32 @@ export class PDFProcessor {
   }
 
   private handleAbort() {
+    // Clear all processing pages
+    this.processingPages.clear();
+
+    // Reject all queue items
     this.processingQueue.forEach((item) => {
       item.reject(new Error("Processing aborted"));
     });
     this.processingQueue = [];
     this.activeProcessing = 0;
 
-    this.worker.postMessage({
-      type: WorkerMessageType.AbortProcessing,
-    });
+    if (this.worker) {
+      this.worker.postMessage({
+        type: WorkerMessageType.AbortProcessing,
+      });
+    }
   }
 
   public async processFile(
     file: File
   ): Promise<{ totalPages: number; status: ProcessingStatus }> {
+    if (!isBrowser) {
+      throw new Error(
+        "PDF processing is only available in browser environments"
+      );
+    }
+
     if (this.abortSignal?.aborted) {
       throw new Error("Processing aborted");
     }
@@ -242,15 +349,20 @@ export class PDFProcessor {
     }
 
     return new Promise((resolve, reject) => {
+      if (!this.worker) {
+        reject(new Error("Worker not initialized"));
+        return;
+      }
+
       const onMessage = (e: MessageEvent) => {
         if (e.data.type === WorkerMessageType.PDFInitialized) {
-          this.worker.removeEventListener("message", onMessage);
+          this.worker!.removeEventListener("message", onMessage);
           resolve({
             totalPages: e.data.totalPages,
             status: ProcessingStatus.PROCESSING,
           });
         } else if (e.data.type === WorkerMessageType.Error) {
-          this.worker.removeEventListener("message", onMessage);
+          this.worker!.removeEventListener("message", onMessage);
           reject(new Error(e.data.error));
         }
       };
@@ -279,10 +391,17 @@ export class PDFProcessor {
     url: string;
     dimensions: { width: number; height: number };
   }> {
+    if (!isBrowser) {
+      throw new Error(
+        "PDF processing is only available in browser environments"
+      );
+    }
+
     if (this.abortSignal?.aborted) {
       throw new Error("Processing aborted");
     }
 
+    // Check cache first
     const cached = this.pageCache.get(`page-${pageNumber}`);
     if (cached) {
       cached.lastAccessed = Date.now();
@@ -296,6 +415,7 @@ export class PDFProcessor {
       };
     }
 
+    // Create a promise that will be resolved when the page is processed
     return new Promise((resolve, reject) => {
       const abortHandler = () => {
         this.processingQueue = this.processingQueue.filter((item) => {
@@ -305,12 +425,27 @@ export class PDFProcessor {
           }
           return true;
         });
+        // Remove from processing set if aborted
+        this.processingPages.delete(pageNumber);
       };
 
+      // Add to queue
       this.processingQueue.push({
         pageNumber,
-        resolve,
-        reject,
+        resolve: (result: {
+          url: string;
+          dimensions: { width: number; height: number };
+          pageNumber: number;
+        }) => {
+          // Remove from processing set when done
+          this.processingPages.delete(pageNumber);
+          resolve(result);
+        },
+        reject: (error: Error) => {
+          // Remove from processing set on error
+          this.processingPages.delete(pageNumber);
+          reject(error);
+        },
         displayInfo,
       });
 
@@ -320,6 +455,7 @@ export class PDFProcessor {
         });
       }
 
+      // Process next item in queue
       this.processNextInQueue();
     });
   }
@@ -329,13 +465,26 @@ export class PDFProcessor {
   }
 
   public cleanup() {
+    // Clear tracking sets
+    this.processingPages.clear();
+
+    if (this.worker) {
+      this.worker.postMessage({
+        type: WorkerMessageType.Cleanup,
+      });
+
+      PDFWorkerPool.getInstance().releaseWorker(this.worker);
+    }
+
     if (this.abortSignal) {
       this.abortSignal.removeEventListener(
         "abort",
         this.handleAbort.bind(this)
       );
     }
-    this.worker.terminate();
+    if (this.cacheCleanupInterval) {
+      clearInterval(this.cacheCleanupInterval);
+    }
   }
 }
 
@@ -427,6 +576,12 @@ export class PDFBatchProcessor {
     },
     abortSignal: AbortSignal
   ): Promise<void> {
+    if (!isBrowser) {
+      throw new Error(
+        "PDF processing is only available in browser environments"
+      );
+    }
+
     const validation = this.validateFiles(files);
     if (!validation.isValid) {
       throw new Error(validation.error);
@@ -448,7 +603,7 @@ export class PDFBatchProcessor {
       const processor = new PDFProcessor(processorOptions, abortSignal);
 
       try {
-        const { totalPages } = await processor.processFile(file);
+        const { totalPages, status } = await processor.processFile(file);
 
         const abortListener = () => {
           processor.abort();
@@ -460,9 +615,12 @@ export class PDFBatchProcessor {
             size: file.size,
             type: file.type,
           });
-          callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
+          callbacks.onFileStatus(file.name, status);
         });
 
+        console.log(
+          `Starting to process all pages for ${file.name} (${totalPages} pages)`
+        );
         const pageResults = await this.processAllPagesWithRetry(
           file.name,
           totalPages,
@@ -473,6 +631,9 @@ export class PDFBatchProcessor {
           },
           abortSignal,
           failedPages
+        );
+        console.log(
+          `Finished processing all pages for ${file.name}, result count: ${pageResults.length}`
         );
 
         const hasPageFailure = pageResults.some(
@@ -530,11 +691,11 @@ export class PDFBatchProcessor {
     const options = { ...this.processorOptions };
 
     if (batchSize > 5) {
-      options.maxConcurrent = 1;
+      options.pageProcessingSlots = 1;
     } else if (batchSize > 2) {
-      options.maxConcurrent = 2;
+      options.pageProcessingSlots = 2;
     } else {
-      options.maxConcurrent = 3;
+      options.pageProcessingSlots = 3;
     }
 
     return options;
@@ -572,6 +733,8 @@ export class PDFBatchProcessor {
         failedPages.set(fileName, []);
       }
 
+      console.log(`Starting processing for ${fileName} page ${pageNumber}`);
+
       for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
         if (abortSignal.aborted) {
           throw new Error("Processing aborted");
@@ -601,9 +764,16 @@ export class PDFBatchProcessor {
             ProcessingStatus.PROCESSING
           );
 
+          console.log(`Calling getPage for ${fileName} page ${pageNumber}`);
           const data = await processor.getPage(
             pageNumber,
             callbacks.displayInfo
+          );
+          console.log(
+            `Finished getPage for ${fileName} page ${pageNumber}, got URL: ${data.url.substring(
+              0,
+              30
+            )}...`
           );
 
           if (abortSignal.aborted) {
@@ -625,6 +795,7 @@ export class PDFBatchProcessor {
             pageRetries.splice(pageRetryIndex, 1);
           }
 
+          console.log(`Successfully processed ${fileName} page ${pageNumber}`);
           return false;
         } catch (error) {
           const isProduction = process.env.NODE_ENV === "production";
@@ -670,5 +841,14 @@ export class PDFBatchProcessor {
 
     const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
     return Promise.allSettled(pageNumbers.map(processPageWithRetry));
+  }
+
+  /**
+   * Terminates all workers in the pool
+   * Call this when the application is shutting down or
+   * when the PDF processing functionality is no longer needed
+   */
+  public static terminateAllWorkers(): void {
+    PDFWorkerPool.getInstance().terminateAll();
   }
 }
