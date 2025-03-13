@@ -124,6 +124,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
         newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
       const newFilePages = new Map<number, PageStatus>(filePages);
 
+      console.log("Adding page to file", fileName, pageNumber, url, status);
+
       newFilePages.set(pageNumber, { url, status });
       newProcessedFiles.set(fileName, newFilePages);
 

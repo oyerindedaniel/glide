@@ -20,13 +20,15 @@ export const MangaSidebar = memo(function MangaSidebar({
   return (
     <div className="flex flex-col gap-4 justify-between h-full">
       <SidebarHeader />
-      <ViewModeSelector
-        currentMode={currentMode}
-        onViewModeChange={onViewModeChange}
-      />
-      {currentMode === ViewMode.PANEL && (
-        <PanelControls onPanelControl={onPanelControl} />
-      )}
+      <div className="flex flex-col gap-4">
+        <ViewModeSelector
+          currentMode={currentMode}
+          onViewModeChange={onViewModeChange}
+        />
+        {currentMode === ViewMode.PANEL && (
+          <PanelControls onPanelControl={onPanelControl} />
+        )}
+      </div>
     </div>
   );
 });

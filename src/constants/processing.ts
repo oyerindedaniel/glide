@@ -10,10 +10,13 @@ const FILE_PROCESSING_EVENTS = Object.freeze({
 
 const MAX_CONCURRENT_FILES = 2;
 const MAX_PAGE_RETRIES = 3;
-const BASE_DELAY_MS = 100;
+const BASE_DELAY_MS = 50;
 
 const FILE_INPUT_TYPES = {
   IMAGE: "image/*",
+  JPEG: "image/jpeg",
+  PNG: "image/png",
+  WEBP: "image/webp",
   AUDIO: "audio/*",
   VIDEO: "video/*",
   PDF: "application/pdf",

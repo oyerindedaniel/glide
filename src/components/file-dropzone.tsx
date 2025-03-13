@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 "use client";
 
@@ -25,676 +26,475 @@ import { mergeRefs } from "@/utils/react";
 import { PanelAbortProcessing } from "./panels/abort-processing";
 import { usePanelStore, PanelType } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
-import { PDFProcessor } from "@/classes/pdf-processor";
 import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
 import {
-  BASE_DELAY_MS,
+  FILE_INPUT_TYPES,
   FILE_PROCESSING_EVENTS,
   MAX_CONCURRENT_FILES,
-  MAX_PAGE_RETRIES,
 } from "@/constants/processing";
-import pLimit from "p-limit";
 import { useShallow } from "zustand/shallow";
 import { sanitizeFileName, validateFile } from "@/utils/file-validation";
+import { PDFBatchProcessor } from "@/classes/pdf-processor";
+import { ImageBatchProcessor } from "@/classes/image-processor";
 
-// if (typeof window !== "undefined") {
-//   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-//     "pdfjs-dist/build/pdf.worker.min.mjs",
-//     import.meta.url
-//   ).toString(); // Required for pdf.js worker
-// }
+const ALLOWED_IMAGE_TYPES = [
+  FILE_INPUT_TYPES.PNG,
+  FILE_INPUT_TYPES.JPEG,
+  FILE_INPUT_TYPES.WEBP,
+];
+const ALLOWED_FILE_TYPES = [...ALLOWED_IMAGE_TYPES, FILE_INPUT_TYPES.PDF];
 
-// useEffect(() => {
-//   const loadPdfWorker = async () => {
-//     const worker = await import("pdfjs-dist/build/pdf.worker.min");
-//     pdfjsLib.GlobalWorkerOptions.workerSrc = worker;
-//   };
+const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
+  {},
+  ref
+) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dropOverlayRef = useRef<HTMLDivElement>(null);
+  const uploadAreaRef = useRef<HTMLDivElement>(null);
+  const processingRef = useRef(false);
+  const [isDragging, setIsDragging] = useState(false);
 
-//   loadPdfWorker().catch((error) => {
-//     console.error("Failed to load PDF worker:", error);
-//   });
-// }, []);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const pendingFiles = useRef<FileList | null>(null);
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-interface FileDropZoneProps {}
+  const {
+    addFile,
+    addPageToFile,
+    setTotalFiles,
+    setFileStatus,
+    setPageStatus,
+    reset,
+    processedFiles,
+  } = useProcessedFilesStore(
+    useShallow((state) => ({
+      addFile: state.addFile,
+      addPageToFile: state.addPageToFile,
+      setTotalFiles: state.setTotalFiles,
+      setFileStatus: state.setFileStatus,
+      setPageStatus: state.setPageStatus,
+      reset: state.reset,
+      processedFiles: state.processedFiles,
+    }))
+  );
+  const {
+    setIsDragging: setIsDraggingStore,
+    isDragging: newDraggingState,
+    animateToSnapPosition,
+    setDropPosition,
+  } = useDropAnimationStore(
+    useShallow((state) => ({
+      setIsDragging: state.setIsDragging,
+      isDragging: state.isDragging,
+      animateToSnapPosition: state.animateToSnapPosition,
+      setDropPosition: state.setDropPosition,
+    }))
+  );
+  const { closePanel, openPanel } = usePanelStore();
 
-const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
-const ALLOWED_FILE_TYPES = [...ALLOWED_IMAGE_TYPES, "application/pdf"];
-
-const FileDropZone = forwardRef<HTMLDivElement, FileDropZoneProps>(
-  function FileDropZone({}, ref) {
-    const fileInputRef = useRef<HTMLInputElement>(null);
-    const dropOverlayRef = useRef<HTMLDivElement>(null);
-    const uploadAreaRef = useRef<HTMLDivElement>(null);
-    const processingRef = useRef(false);
-    const [isDragging, setIsDragging] = useState(false);
-
-    const abortControllerRef = useRef<AbortController | null>(null);
-    const pendingFiles = useRef<FileList | null>(null);
-
-    const {
-      addFile,
-      addPageToFile,
-      setTotalFiles,
-      setFileStatus,
-      setPageStatus,
-      reset,
-      processedFiles,
-    } = useProcessedFilesStore(
-      useShallow((state) => ({
-        addFile: state.addFile,
-        addPageToFile: state.addPageToFile,
-        setTotalFiles: state.setTotalFiles,
-        setFileStatus: state.setFileStatus,
-        setPageStatus: state.setPageStatus,
-        reset: state.reset,
-        processedFiles: state.processedFiles,
-      }))
-    );
-    const {
-      setIsDragging: setIsDraggingStore,
-      isDragging: newDraggingState,
-      animateToSnapPosition,
-      setDropPosition,
-    } = useDropAnimationStore(
-      useShallow((state) => ({
-        setIsDragging: state.setIsDragging,
-        isDragging: state.isDragging,
-        animateToSnapPosition: state.animateToSnapPosition,
-        setDropPosition: state.setDropPosition,
-      }))
-    );
-    const { closePanel, openPanel } = usePanelStore();
-
-    /** Cleanup when component unmounts */
-    useEffect(() => {
-      return () => {
-        // TOD0: Consider resetting the store a better way
-        // reset();
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-        }
-      };
-    }, []);
-
-    /** Setup up drop position when upload file is trigger via click */
-    useEffect(() => {
-      const element = uploadAreaRef.current;
-      if (!element) return;
-
-      const { x, width, top } = element.getBoundingClientRect();
-
-      const newX = Math.round(x + width);
-      const newY = Math.round(top);
-
-      setDropPosition(newX, newY);
-    }, [setDropPosition]);
-
-    /** Handles drag events to show overlay */
-    const handleDrag = useCallback(
-      (event: React.DragEvent) => {
-        event.preventDefault();
-        const isDragging = event.type === "dragover";
-
-        setIsDragging(isDragging);
-        if (isDragging !== newDraggingState) {
-          setIsDraggingStore(isDragging);
-        }
-      },
-      [newDraggingState, setIsDraggingStore]
-    );
-
-    /** Handles animation to snap position */
-    const animate = useCallback(
-      async function (filesLength: number) {
-        animateToSnapPosition();
-
-        setTimeout(() => {
-          setTotalFiles(filesLength);
-        }, ANIMATION_DURATION - 50);
-
-        // Delays processing (progress animation duration)
-        await delay(ANIMATION_DURATION);
-      },
-      [animateToSnapPosition, setTotalFiles]
-    );
-
-    // 3 cases
-    // single (redirect) or multiple images (allow for rearrangement before redirect)
-    // single pdf upload (allow for rearrangement before redirect) -> if new pdf are to be added restart
-    // muliple pdf upload (two options) (immediately is noticed redirect to start reading) (shallow level)
-    // or (indepth level)
-    // after indepth down show all files then allow for rearrangement
-
-    const processPdfsWithConcurrency = useCallback(async function (
-      files: File[],
-      abortSignal: AbortSignal
-    ) {
-      // Initialize concurrency limit
-      const limit = pLimit(MAX_CONCURRENT_FILES);
-
-      // Function to check if the user is online
-      function isOnline() {
-        return navigator.onLine;
+  /** Cleanup when component unmounts */
+  useEffect(() => {
+    return () => {
+      // TOD0: Consider resetting the store a better way
+      // reset();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
+    };
+  }, []);
+
+  /** Setup up drop position when upload file is trigger via click */
+  useEffect(() => {
+    const element = uploadAreaRef.current;
+    if (!element) return;
+
+    const { x, width, top } = element.getBoundingClientRect();
+
+    const newX = Math.round(x + width);
+    const newY = Math.round(top);
+
+    setDropPosition(newX, newY);
+  }, [setDropPosition]);
+
+  /** Handles drag events to show overlay */
+  const handleDrag = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault();
+      const isDragging = event.type === "dragover";
+
+      setIsDragging(isDragging);
+      if (isDragging !== newDraggingState) {
+        setIsDraggingStore(isDragging);
+      }
+    },
+    [newDraggingState, setIsDraggingStore]
+  );
+
+  /** Handles animation to snap position */
+  const animate = useCallback(
+    async function (filesLength: number) {
+      animateToSnapPosition();
+
+      setTimeout(() => {
+        setTotalFiles(filesLength);
+      }, ANIMATION_DURATION - 50);
+
+      // Delays processing (progress animation duration)
+      await delay(ANIMATION_DURATION);
+    },
+    [animateToSnapPosition, setTotalFiles]
+  );
+
+  const getDisplayInfo = useCallback(() => {
+    const readerWidthPercent =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--reader-width"
+        )
+      ) || 75;
+
+    return {
+      devicePixelRatio: window.devicePixelRatio || 1,
+      containerWidth: window.innerWidth * (readerWidthPercent / 100),
+      containerHeight: window.innerHeight,
+    };
+  }, []);
+
+  /** Handles PDF processing with concurrency */
+  const processPdfs = useCallback(
+    async function (files: File[], abortSignal: AbortSignal) {
+      const batchProcessor = new PDFBatchProcessor({
+        maxConcurrentFiles: MAX_CONCURRENT_FILES,
+      });
 
       setTimeout(() => {
         toast.loading("Processing PDFs...", { id: "file-processing" });
       }, 500);
 
-      // Retry failed pages with exponential backoff and online check
-      async function processPageWithRetry(
-        fileName: string,
-        pageNumber: number,
-        processor: PDFProcessor
-      ) {
-        for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
-          if (abortSignal.aborted) {
-            throw new Error("Processing aborted");
-          }
-
-          try {
-            // Check if user is online before retrying
-            while (!isOnline()) {
-              console.warn(
-                `User offline. Pausing retries for ${fileName} page ${pageNumber}`
+      try {
+        await batchProcessor.processBatch(
+          files,
+          {
+            onFileAdd: (fileName, totalPages, metadata) => {
+              fileProcessingEmitter.emit(
+                FILE_PROCESSING_EVENTS.FILE_ADD,
+                fileName,
+                totalPages,
+                metadata
               );
-              // TODO: Consider debouncing or limiting toast notifications
-              toast.warning(
-                `User offline. Pausing retries for ${fileName} page ${pageNumber}`,
-                { id: "is-online" }
+            },
+            onFileStatus: (fileName, status) => {
+              fileProcessingEmitter.emit(
+                FILE_PROCESSING_EVENTS.FILE_STATUS,
+                fileName,
+                status
               );
-              await delay(5000); // Check again after 5 seconds
-            }
-
-            // Emit PAGE_PROCESSED event for processing
-            fileProcessingEmitter.emit(
-              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-              fileName,
-              pageNumber,
-              null,
-              ProcessingStatus.PROCESSING
-            );
-
-            const data = await processor.getPage(pageNumber);
-
-            if (abortSignal.aborted) {
-              throw new Error("Processing aborted");
-            }
-
-            // Success: Emit PAGE_PROCESSED event
-            fileProcessingEmitter.emit(
-              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-              fileName,
-              pageNumber,
-              data.url,
-              ProcessingStatus.COMPLETED
-            );
-            return false; // Page processed successfully
-          } catch {
-            console.warn(
-              `Page ${pageNumber} of ${fileName} failed (Attempt: ${attempt})`
-            );
-
-            // Track failed pages for retry
-            const failedPages = new Map<
-              string,
-              { pageNumber: number; attempts: number }[]
-            >();
-            if (!failedPages.has(fileName)) {
-              failedPages.set(fileName, []);
-            }
-
-            const pageRetries = failedPages.get(fileName)!;
-            const existingPage = pageRetries.find(
-              (p) => p.pageNumber === pageNumber
-            );
-
-            if (existingPage) {
-              existingPage.attempts++;
-            } else {
-              pageRetries.push({ pageNumber, attempts: 1 });
-            }
-
-            // If max retries reached, mark page as failed
-            if (attempt === MAX_PAGE_RETRIES) {
+            },
+            onPageProcessed: (fileName, pageNumber, url, status) => {
               fileProcessingEmitter.emit(
                 FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
                 fileName,
                 pageNumber,
-                null,
-                ProcessingStatus.FAILED
+                url,
+                status
               );
-              return true; // Page failed after max retries
-            }
-
-            // Apply exponential backoff before the next attempt
-            const delayTime = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-            await delay(delayTime);
-          }
-        }
-        return true;
-      }
-
-      // Process a single PDF file
-      const processPdf = async (file: File) => {
-        if (abortSignal.aborted) {
-          throw new Error("Processing aborted");
-        }
-
-        const processor = new PDFProcessor({
-          maxConcurrent: 2,
-          pageBufferSize: 5,
-        });
-
-        try {
-          // Process the file to get total pages
-          const { totalPages } = await processor.processFile(file);
-
-          // Emit initial file events
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_ADD,
-            file.name,
-            totalPages,
-            { size: file.size, type: file.type }
-          );
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-            totalPages
-          );
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            ProcessingStatus.PROCESSING
-          );
-
-          // Prepare pages to process
-          const totalPagesArr = Array.from(
-            { length: totalPages },
-            (_, i) => i + 1
-          );
-
-          // Process all pages with retry logic, respecting concurrency
-          const pageResults = await Promise.allSettled(
-            totalPagesArr.map((pageNum) =>
-              processPageWithRetry(file.name, pageNum, processor)
-            )
-          );
-
-          // Check for failed pages
-          const hasPageFailure = pageResults.some(
-            (result) => result.status === "rejected" || result.value === true
-          );
-
-          // If all pages failed, throw an error
-          const failedPagesCount = pageResults.filter(
-            (result) => result.status === "rejected" || result.value === true
-          ).length;
-          if (failedPagesCount === totalPages) {
-            throw new Error(
-              "An unexpected error occurred. Please try again later."
-            );
-          }
-
-          // Emit file status
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            hasPageFailure
-              ? ProcessingStatus.FAILED
-              : ProcessingStatus.COMPLETED
-          );
-        } catch (error) {
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            ProcessingStatus.FAILED
-          );
-          throw error;
-        } finally {
-          processor.cleanup();
-        }
-      };
-
-      // Create promises for each file, wrapped with concurrency limit
-      const processingPromises = files.map((file) =>
-        limit(() => processPdf(file))
-      );
-
-      try {
-        const results = await Promise.allSettled(processingPromises);
-
-        const errors = results.filter((r) => r.status === "rejected");
-        if (errors.length > 0) {
-          throw new Error("One or more files failed during processing.");
-        }
+            },
+            displayInfo: getDisplayInfo(),
+          },
+          abortSignal
+        );
       } catch (error) {
+        // Error is already handled by Promise.allSettled inside the batch processor
+        // We just need to re-throw it for the toast to catch it
         throw error;
       }
     },
-    []);
+    [getDisplayInfo]
+  );
 
-    /**
-     * Process Image Files Sequentially
-     */
-    const processImages = useCallback(
-      async function processImages(
-        files: File[],
-        abortSignal: AbortSignal,
-        updateProgress: () => void,
-        state: { totalPages: number; processedPages: number }
-      ) {
-        state.totalPages = files.length;
+  /** Handles Image processing with batch processor */
+  const processImages = useCallback(async function (
+    files: File[],
+    abortSignal: AbortSignal
+  ) {
+    const batchProcessor = new ImageBatchProcessor({
+      allowedImageTypes: ALLOWED_IMAGE_TYPES,
+    });
 
-        for (const file of files) {
-          if (abortSignal.aborted) {
-            throw new Error("Processing aborted");
-          }
+    setTimeout(() => {
+      toast.loading("Processing images...", { id: "file-processing" });
+    }, 500);
 
-          fileProcessingEmitter.emit(
-            FILE_PROCESSING_EVENTS.FILE_STATUS,
-            file.name,
-            ProcessingStatus.PROCESSING
-          );
-
-          try {
-            const url = URL.createObjectURL(file);
-            addFile(file.name, 1, { size: file.size, type: file.type });
-            addPageToFile(file.name, 1, url);
-
-            state.processedPages++;
-
+    try {
+      await batchProcessor.processBatch(
+        files,
+        {
+          onFileAdd: (fileName, totalPages, metadata) => {
+            fileProcessingEmitter.emit(
+              FILE_PROCESSING_EVENTS.FILE_ADD,
+              fileName,
+              totalPages,
+              metadata
+            );
+          },
+          onFileStatus: (fileName, status) => {
             fileProcessingEmitter.emit(
               FILE_PROCESSING_EVENTS.FILE_STATUS,
-              file.name,
-              ProcessingStatus.COMPLETED
+              fileName,
+              status
             );
+          },
+          onImageProcessed: (fileName, url, status) => {
+            if (status === ProcessingStatus.COMPLETED && url) {
+              fileProcessingEmitter.emit(
+                FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+                fileName,
+                1, // Images always have 1 page
+                url,
+                status
+              );
+            }
+          },
+        },
+        abortSignal
+      );
+    } catch (error) {
+      throw error;
+    }
+  },
+  []);
 
-            updateProgress();
-          } catch (error) {
-            fileProcessingEmitter.emit(
-              FILE_PROCESSING_EVENTS.FILE_STATUS,
-              file.name,
-              ProcessingStatus.FAILED
-            );
-            throw error;
-          }
-        }
-      },
-      [addFile, addPageToFile]
-    );
+  /** Handles file list */
+  const handleFiles = useCallback(
+    async (files: FileList) => {
+      if (processingRef.current) return;
 
-    /** Processes file list */
-    const handleFiles = useCallback(
-      async (files: FileList) => {
-        if (processingRef.current) return;
+      processingRef.current = true;
 
-        processingRef.current = true;
+      const uploadedFiles = Array.from(files);
 
-        const uploadedFiles = Array.from(files);
-
-        // Validate each file with allowed types
-        for (const file of uploadedFiles) {
-          const validation = validateFile(file, ALLOWED_FILE_TYPES);
-          if (!validation.isValid) {
-            toast.error(`${file.name}: ${validation.error}`);
-            processingRef.current = false;
-            return;
-          }
-        }
-
-        // Create sanitized files array
-        const sanitizedFiles = uploadedFiles.map((file) => {
-          const sanitizedName = sanitizeFileName(file.name);
-          return new File([file], sanitizedName, { type: file.type });
-        });
-
-        // Check for duplicate sanitized names
-        const fileNames = new Set<string>();
-        for (const file of sanitizedFiles) {
-          if (fileNames.has(file.name)) {
-            toast.error("Duplicate file names detected");
-            processingRef.current = false;
-            return;
-          }
-          fileNames.add(file.name);
-        }
-
-        // Rest of your existing handleFiles logic, but use sanitizedFiles instead of uploadedFiles
-        const fileTypes = new Set(sanitizedFiles.map((file) => file.type));
-        if (fileTypes.size > 1) {
-          toast("Please upload files of the same type (either images or PDF).");
+      // Validate general file types first
+      for (const file of uploadedFiles) {
+        const validation = validateFile(file, ALLOWED_FILE_TYPES);
+        if (!validation.isValid) {
+          toast.error(`${file.name}: ${validation.error}`);
           processingRef.current = false;
           return;
         }
-
-        for (const file of sanitizedFiles) {
-          if (processedFiles.has(file.name)) {
-            const pages = processedFiles.get(file.name);
-            if (pages && Array.from(pages.values()).every((page) => page.url)) {
-              toast(`File "${file.name}" is already uploaded.`);
-              return;
-            }
-          }
-        }
-
-        // animation
-        await animate(sanitizedFiles.length);
-
-        // new abort controller
-        abortControllerRef.current?.abort();
-        abortControllerRef.current = new AbortController();
-        const { signal: abortSignal } = abortControllerRef.current;
-
-        const state = { totalPages: 0, processedPages: 0 };
-
-        const isPDF = fileTypes.has("application/pdf");
-
-        const updateProgress = () => {
-          if (abortSignal.aborted) return;
-          const { totalPages, processedPages } = state;
-          const progress =
-            totalPages > 0
-              ? Math.round((processedPages / totalPages) * 100)
-              : 0;
-          toast.loading(
-            isPDF
-              ? `Processing PDF: ${progress}% (page ${processedPages} of ${totalPages})`
-              : `Processing images: ${progress}% (${processedPages} of ${totalPages})`,
-            { id: "file-processing" }
-          );
-        };
-
-        // Event listeners
-        const onFileAdd = (
-          fileName: string,
-          totalPages: number,
-          { size, type }: { size: number; type: string }
-        ) => {
-          startTransition(() => {
-            addFile(fileName, totalPages, { size, type });
-          });
-        };
-
-        const onPageProcessed = function (
-          fileName: string,
-          pageNumber: number,
-          url: string | null,
-          status: ProcessingStatus
-        ) {
-          state.processedPages++;
-          if (status === ProcessingStatus.COMPLETED && url) {
-            startTransition(() => {
-              addPageToFile(fileName, pageNumber, url);
-            });
-          }
-
-          startTransition(() => {
-            setPageStatus(fileName, pageNumber, status);
-          });
-          // updateProgress();
-        };
-
-        const onFileStatus = (fileName: string, status: ProcessingStatus) => {
-          startTransition(() => {
-            setFileStatus(fileName, status);
-          });
-        };
-
-        const onTotalPagesUpdate = (pages: number) => {
-          state.totalPages += pages;
-          // updateProgress();
-        };
-
-        fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
-        fileProcessingEmitter.on(
-          FILE_PROCESSING_EVENTS.FILE_STATUS,
-          onFileStatus
-        );
-        fileProcessingEmitter.on(
-          FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-          onPageProcessed
-        );
-        fileProcessingEmitter.on(
-          FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-          onTotalPagesUpdate
-        );
-
-        const processPromise = new Promise<void>(async (resolve, reject) => {
-          try {
-            if (isPDF) {
-              if (sanitizedFiles.length === 1) {
-                await processPdfsWithConcurrency(sanitizedFiles, abortSignal);
-                // await processSinglePdf(uploadedFiles[0], abortSignal);
-              } else {
-                await processPdfsWithConcurrency(sanitizedFiles, abortSignal);
-              }
-            } else {
-              await processImages(
-                sanitizedFiles,
-                abortSignal,
-                updateProgress,
-                state
-              );
-            }
-            resolve();
-          } catch (error) {
-            if ((error as Error).message === "Processing aborted") {
-              toast.dismiss("file-processing");
-              toast.error("Processing cancelled");
-            } else {
-              reject(error);
-            }
-          } finally {
-            processingRef.current = false;
-            closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
-            fileProcessingEmitter.off(
-              FILE_PROCESSING_EVENTS.FILE_STATUS,
-              onFileStatus
-            );
-            fileProcessingEmitter.off(
-              FILE_PROCESSING_EVENTS.FILE_ADD,
-              onFileAdd
-            );
-            fileProcessingEmitter.off(
-              FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-              onPageProcessed
-            );
-            fileProcessingEmitter.off(
-              FILE_PROCESSING_EVENTS.TOTAL_PAGES_UPDATE,
-              onTotalPagesUpdate
-            );
-          }
-        });
-
-        toast.promise(processPromise, {
-          loading: "Initializing processor...",
-          success: () => {
-            return "All files processed successfully! 🎉";
-          },
-          error: (error) => {
-            console.error("Processing error:", error);
-            return error instanceof Error
-              ? `Processing failed: ${error.message}`
-              : "Failed to process files. Please try again.";
-          },
-          id: "file-processing",
-        });
-      },
-      [
-        addFile,
-        addPageToFile,
-        animate,
-        closePanel,
-        processImages,
-        processPdfsWithConcurrency,
-        processedFiles,
-        setFileStatus,
-        setPageStatus,
-      ]
-    );
-
-    /** Handles new file upload while processing */
-    const handleNewUploadRequest = useCallback(
-      (files: FileList) => {
-        if (processingRef.current) {
-          pendingFiles.current = files;
-          openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
-        } else {
-          handleFiles(files);
-        }
-      },
-      [handleFiles, openPanel]
-    );
-
-    /** Abort current processing and start new */
-    const handleAbortAndProcess = useCallback(() => {
-      abortControllerRef.current?.abort();
-      processingRef.current = false;
-      closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
-      reset();
-      if (pendingFiles.current) {
-        handleFiles(pendingFiles.current);
-        pendingFiles.current = null;
       }
-    }, [closePanel, handleFiles, reset]);
 
-    return (
-      <>
-        <PanelAbortProcessing handleAbortAndProcess={handleAbortAndProcess} />
-        <div>
-          {/* Drag Overlay for detecting file drag */}
-          <DropOverlay
-            ref={dropOverlayRef}
-            isDragging={isDragging}
-            onDragEvent={handleDrag}
-            onFilesDropped={handleNewUploadRequest}
-          />
+      // Create sanitized files array
+      const sanitizedFiles = uploadedFiles.map((file) => {
+        const sanitizedName = sanitizeFileName(file.name);
+        return new File([file], sanitizedName, { type: file.type });
+      });
 
-          {/* Hidden File Input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            hidden
-            multiple
-            accept={ALLOWED_FILE_TYPES.join(",")}
-            onChange={(e) =>
-              e.target.files?.length && handleFiles(e.target.files)
-            }
-          />
+      // Check for duplicate sanitized names
+      const fileNames = new Set<string>();
+      for (const file of sanitizedFiles) {
+        if (fileNames.has(file.name)) {
+          toast.error("Duplicate file names detected");
+          processingRef.current = false;
+          return;
+        }
+        fileNames.add(file.name);
+      }
 
-          {/* Upload Icon & Clickable Area */}
-          <UploadArea
-            ref={ref}
-            uploadAreaRef={uploadAreaRef}
-            isDragging={isDragging}
-            onClick={() => fileInputRef.current?.click()}
-          />
-        </div>
-      </>
-    );
-  }
-);
+      // Check file types
+      const fileTypes = new Set(sanitizedFiles.map((file) => file.type));
+      if (fileTypes.size > 1) {
+        toast("Please upload files of the same type (either images or PDF).");
+        processingRef.current = false;
+        return;
+      }
+
+      // Check for already processed files
+      for (const file of sanitizedFiles) {
+        if (processedFiles.has(file.name)) {
+          const pages = processedFiles.get(file.name);
+          if (pages && Array.from(pages.values()).every((page) => page.url)) {
+            toast(`File "${file.name}" is already uploaded.`);
+            return;
+          }
+        }
+      }
+
+      // Animation
+      await animate(sanitizedFiles.length);
+
+      // New abort controller
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = new AbortController();
+      const { signal: abortSignal } = abortControllerRef.current;
+
+      const isPDF = fileTypes.has(FILE_INPUT_TYPES.PDF);
+      const isImage =
+        fileTypes.has(FILE_INPUT_TYPES.PNG) ||
+        fileTypes.has(FILE_INPUT_TYPES.JPEG) ||
+        fileTypes.has(FILE_INPUT_TYPES.WEBP);
+
+      // Event listeners
+      const onFileAdd = (
+        fileName: string,
+        totalPages: number,
+        { size, type }: { size: number; type: string }
+      ) => {
+        // startTransition(() => {
+        addFile(fileName, totalPages, { size, type });
+        // });
+      };
+
+      const onPageProcessed = function (
+        fileName: string,
+        pageNumber: number,
+        url: string | null,
+        status: ProcessingStatus
+      ) {
+        if (status === ProcessingStatus.COMPLETED && url) {
+          startTransition(() => {
+            addPageToFile(fileName, pageNumber, url);
+          });
+        }
+
+        startTransition(() => {
+          setPageStatus(fileName, pageNumber, status);
+        });
+      };
+
+      const onFileStatus = (fileName: string, status: ProcessingStatus) => {
+        startTransition(() => {
+          setFileStatus(fileName, status);
+        });
+      };
+
+      fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
+      fileProcessingEmitter.on(
+        FILE_PROCESSING_EVENTS.FILE_STATUS,
+        onFileStatus
+      );
+      fileProcessingEmitter.on(
+        FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+        onPageProcessed
+      );
+
+      const processPromise = new Promise<void>(async (resolve, reject) => {
+        try {
+          if (isPDF) {
+            await processPdfs(sanitizedFiles, abortSignal);
+          } else if (isImage) {
+            await processImages(sanitizedFiles, abortSignal);
+          } else {
+            throw new Error("Invalid file type");
+          }
+          resolve();
+        } catch (error) {
+          if ((error as Error).message === "Processing aborted") {
+            toast.dismiss("file-processing");
+            toast.error("Processing cancelled");
+          } else {
+            reject(error);
+          }
+        } finally {
+          processingRef.current = false;
+          closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+          fileProcessingEmitter.off(
+            FILE_PROCESSING_EVENTS.FILE_STATUS,
+            onFileStatus
+          );
+          fileProcessingEmitter.off(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
+          fileProcessingEmitter.off(
+            FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
+            onPageProcessed
+          );
+        }
+      });
+
+      toast.promise(processPromise, {
+        loading: "Initializing processor...",
+        success: () => {
+          return "All files processed successfully! 🎉";
+        },
+        error: (error) => {
+          console.error("Processing error:", error);
+          return error instanceof Error
+            ? `Processing failed: ${error.message}`
+            : "Failed to process files. Please try again.";
+        },
+        id: "file-processing",
+      });
+    },
+    [
+      addFile,
+      addPageToFile,
+      animate,
+      closePanel,
+      processImages,
+      processPdfs,
+      processedFiles,
+      setFileStatus,
+      setPageStatus,
+    ]
+  );
+
+  /** Handles new file upload while processing */
+  const handleNewUploadRequest = useCallback(
+    (files: FileList) => {
+      if (processingRef.current) {
+        pendingFiles.current = files;
+        openPanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+      } else {
+        handleFiles(files);
+      }
+    },
+    [handleFiles, openPanel]
+  );
+
+  /** Abort current processing and start new */
+  const handleAbortAndProcess = useCallback(() => {
+    abortControllerRef.current?.abort();
+    processingRef.current = false;
+    closePanel(PANEL_IDS.ABORT_PROCESSING, PanelType.CENTER);
+    reset();
+    if (pendingFiles.current) {
+      handleFiles(pendingFiles.current);
+      pendingFiles.current = null;
+    }
+  }, [closePanel, handleFiles, reset]);
+
+  return (
+    <>
+      <PanelAbortProcessing handleAbortAndProcess={handleAbortAndProcess} />
+      <div>
+        {/* Drag Overlay for detecting file drag */}
+        <DropOverlay
+          ref={dropOverlayRef}
+          isDragging={isDragging}
+          onDragEvent={handleDrag}
+          onFilesDropped={handleNewUploadRequest}
+        />
+
+        {/* Hidden File Input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          hidden
+          multiple
+          accept={ALLOWED_FILE_TYPES.join(",")}
+          onChange={(e) =>
+            e.target.files?.length && handleFiles(e.target.files)
+          }
+        />
+
+        {/* Upload Icon & Clickable Area */}
+        <UploadArea
+          ref={ref}
+          uploadAreaRef={uploadAreaRef}
+          isDragging={isDragging}
+          onClick={() => fileInputRef.current?.click()}
+        />
+      </div>
+    </>
+  );
+});
 
 export default FileDropZone;
 
