@@ -385,12 +385,16 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
           } else {
             throw new Error("Invalid file type");
           }
+          // Explicitly dismiss the processing toast before resolving
+          toast.dismiss("file-processing");
           resolve();
         } catch (error) {
           if ((error as Error).message === "Processing aborted") {
             toast.dismiss("file-processing");
             toast.error("Processing cancelled");
           } else {
+            // Ensure toast is dismissed even on error
+            toast.dismiss("file-processing");
             reject(error);
           }
         } finally {

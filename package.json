@@ -2,14 +2,16 @@
   "name": "glide",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "pnpm run prepare-pdfjs && next dev",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "pnpm run copy-pdf-worker",
     "build:worker": "esbuild pdf.worker.ts --bundle --outfile=public/pdfjs/pdf.worker.js --format=esm",
-    "build": "next build && pnpm run copy-pdf-worker",
-    "copy-pdf-worker": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs public/pdfjs/ || copy node_modules\\pdfjs-dist\\legacy\\build\\pdf.worker.mjs public\\pdfjs"
+    "build": "pnpm run prepare-pdfjs && next build",
+    "copy-pdf-worker": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs public/pdfjs/ || copy node_modules\\pdfjs-dist\\legacy\\build\\pdf.worker.mjs public\\pdfjs",
+    "prepare-pdfjs": "node scripts/copy-pdfjs.js ; node scripts/convert-pdfjs.js"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

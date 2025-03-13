@@ -1,5 +1,4 @@
 import { PDFWorkerPool } from "../worker/pdf.worker-pool";
-// import { pdfJsWorker } from "../worker/pdf-library.worker";
 
 // Check if we're in a browser environment
 const isBrowser =
@@ -17,20 +16,15 @@ export function cleanupPDFWorkers(): boolean {
   if (!isBrowser) return true;
 
   try {
-    // Terminate worker pool first
+    // Terminate worker pool
     PDFWorkerPool.getInstance().terminateAll();
 
-    // Double-check pdfJsWorker is also terminated
-    // if (pdfJsWorker) {
-    //   setTimeout(() => {
-    //     try {
-    //       // Use non-null assertion since we've already checked
-    //       pdfJsWorker!.terminate();
-    //     } catch (error) {
-    //       console.warn("Could not terminate PDF.js worker directly", error);
-    //     }
-    //   }, 500);
-    // }
+    // Notify Service Worker to clear cache
+    if ("serviceWorker" in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: "CLEAR_PDF_CACHE",
+      });
+    }
 
     return true;
   } catch (error) {

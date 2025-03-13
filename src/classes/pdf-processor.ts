@@ -468,12 +468,28 @@ export class PDFProcessor {
     // Clear tracking sets
     this.processingPages.clear();
 
+    // Reject all pending queue items with a cleanup message to avoid hanging promises
+    if (this.processingQueue.length > 0) {
+      console.log(
+        `Cleaning up ${this.processingQueue.length} pending page processing promises`
+      );
+      this.processingQueue.forEach((item) => {
+        item.reject(new Error("Processing stopped during cleanup"));
+      });
+      this.processingQueue = [];
+    }
+
     if (this.worker) {
+      console.log("Sending cleanup message to worker");
       this.worker.postMessage({
         type: WorkerMessageType.Cleanup,
       });
 
-      PDFWorkerPool.getInstance().releaseWorker(this.worker);
+      // Wait a bit to ensure the cleanup message is processed
+      setTimeout(() => {
+        PDFWorkerPool.getInstance().releaseWorker(this.worker!);
+        console.log("Worker released back to pool");
+      }, 100);
     }
 
     if (this.abortSignal) {
@@ -482,6 +498,7 @@ export class PDFProcessor {
         this.handleAbort.bind(this)
       );
     }
+
     if (this.cacheCleanupInterval) {
       clearInterval(this.cacheCleanupInterval);
     }
