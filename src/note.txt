@@ -22,3 +22,6 @@ parentRef (e.g., <div>)
         ├── pageEl-2 (height: 100svh)
         ├── pageEl-3 (height: 100svh)
         └── ... (stacked vertically)
+
+
+Review shared Worker used at pdf processing. it stops the Concurrency

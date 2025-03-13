@@ -205,8 +205,8 @@ function calculateOptimalScale(
   // Calculate container-based scale if container width is provided
   let containerScale = baseScale;
   if (displayInfo?.containerWidth) {
-    // Target 95% of container width to allow for some margin
-    const targetWidth = displayInfo.containerWidth * 0.95;
+    // Target 98% of container width to allow for some margin
+    const targetWidth = displayInfo.containerWidth * 0.98;
 
     // Calculate scale needed to fit PDF width to target width
     containerScale = targetWidth / pdfWidth;
@@ -234,8 +234,6 @@ function calculateOptimalScale(
 
   // Store result in cache
   scaleCache.set(cacheKey, optimalScale);
-
-  console.log("Optimal scale", optimalScale);
 
   // At the end, before returning
   console.log(

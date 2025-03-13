@@ -10,8 +10,9 @@ import {
   PanelHeader,
   PanelDescription,
   PanelAction,
+  PanelIcon,
 } from "../ui/panel";
-
+import { AlertTriangle } from "lucide-react";
 import { PanelType, usePanelStore } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
 import { useIsMounted } from "@/hooks/use-is-mounted";
@@ -42,20 +43,27 @@ export const PanelAbortProcessing: React.FC<Props> = ({
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange}>
       <PanelContent
-        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-black text-white max-w-80 w-full"
+        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-[#0B0B0B] text-white max-w-80 w-full"
         id="panel"
       >
-        <PanelHeader>
-          <PanelTitle className="">Cancel Current Processing?</PanelTitle>
-          <PanelDescription></PanelDescription>
+        <PanelHeader className="flex items-start gap-4 pb-4">
+          <PanelIcon>
+            <AlertTriangle className="h-3 w-3" />
+          </PanelIcon>
+          <div>
+            <PanelTitle className="">Cancel Current Processing?</PanelTitle>
+            <PanelDescription></PanelDescription>
+          </div>
         </PanelHeader>
-        <PanelBody className="text-sm">
+
+        <PanelBody className="text-sm pt-4">
           <p>
             Do you want to cancel the current file processing to handle new
             files?
           </p>
         </PanelBody>
-        <PanelFooter className="flex flex-col gap-3">
+
+        <PanelFooter className="flex flex-col gap-3 pt-4 border-t border-neutral-800 mt-4">
           <PanelAction
             className="w-full"
             onClick={handleAbortAndProcess}

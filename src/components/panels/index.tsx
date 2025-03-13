@@ -2,6 +2,7 @@
 
 import { useIsMounted } from "@/hooks/use-is-mounted";
 import ProgressUpload from "./progress-upload";
+import { ImagePreview } from "@/components/ui/image-preview";
 
 export function Panels() {
   const isMounted = useIsMounted();
@@ -11,6 +12,7 @@ export function Panels() {
   return (
     <div className="absolute">
       <ProgressUpload />
+      <ImagePreview />
     </div>
   );
 }
