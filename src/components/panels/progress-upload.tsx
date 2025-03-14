@@ -58,6 +58,8 @@ const isSortingDisabled = (
 
 // ----- Sub-Components -----
 
+// TODO: optimize this component
+
 // PDF Page Item Component
 const PageItem = memo(
   ({
@@ -116,7 +118,7 @@ const PageItem = memo(
                 </div>
               )}
             </div>
-            <span>{`Page ${page}`}</span>
+            <span className="text-sm">{`Page ${page}`}</span>
           </div>
           <ProgressPulseRoot status={pageData.status}>
             <ProgressPulseContent />
@@ -228,7 +230,6 @@ const ImageFileItem = memo(
     const handleImageClick = (e: React.MouseEvent) => {
       e.stopPropagation();
       if (firstPage?.url) {
-        console.log("firstPage?.url", firstPage.url);
         openImagePreview(firstPage.url, fileName, fileName);
       }
     };
@@ -326,16 +327,14 @@ const UploadPanelHeader = memo(
     processedFiles: Map<string, Map<number, PageStatus>>;
     allFilesProcessed: boolean;
   }) => (
-    <PanelHeader className="flex items-start gap-4 pb-4">
+    <PanelHeader className="flex items-start gap-4">
       <PanelIcon>
         <Upload aria-hidden="true" className="h-3 w-3" />
         <span className="sr-only">Upload</span>
       </PanelIcon>
       <div>
-        <PanelTitle className="text-lg font-semibold">
-          File Upload In Progress
-        </PanelTitle>
-        <PanelDescription className="text-sm text-gray-400">
+        <PanelTitle>File Upload In Progress</PanelTitle>
+        <PanelDescription>
           {allFilesProcessed
             ? "All files have been successfully processed!"
             : `Processing ${processedFiles.size} of ${totalFiles} files — Hang tight, we're almost done!`}
@@ -368,13 +367,17 @@ export function ProgressUpload() {
     }))
   );
 
-  const { getActivePanels, closePanel, openPanel } = usePanelStore();
+  const { centerStack, closePanel, openPanel } = usePanelStore(
+    useShallow((state) => ({
+      centerStack: state.centerStack,
+      closePanel: state.closePanel,
+      openPanel: state.openPanel,
+    }))
+  );
   const [openAccordions, setOpenAccordions] = useState<string[]>([]);
-  const { center } = getActivePanels();
 
-  const isOpen = center.includes(PANEL_IDS.PROGRESS_UPLOAD);
+  const isOpen = centerStack.includes(PANEL_IDS.PROGRESS_UPLOAD);
 
-  // Create a modified onOpenChange handler that won't close when opening image preview
   const handlePanelOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -451,7 +454,7 @@ export function ProgressUpload() {
       <Panel open={isOpen} onOpenChange={handlePanelOpenChange} withOverlay>
         <PanelContent
           className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 max-w-150 w-full"
-          id="panel"
+          id={PANEL_IDS.PROGRESS_UPLOAD}
         >
           <UploadPanelHeader
             totalFiles={totalFiles}
@@ -459,8 +462,8 @@ export function ProgressUpload() {
             allFilesProcessed={allFilesProcessed}
           />
 
-          <PanelBody className="text-sm pt-4">
-            <h2 className="my-2">Total File(s): {totalFiles}</h2>
+          <PanelBody className="text-sm">
+            <h2>Total File(s): {totalFiles}</h2>
             <ScrollArea className="h-fit w-full pr-3">
               <div className="max-h-75">
                 <SortableRoot

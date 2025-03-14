@@ -23,6 +23,7 @@ interface ProcessedFileState {
   fileStatus: Map<string, ProcessingStatus>;
   fileMetadata: Map<string, { size: number; type: string }>;
   totalFiles: number;
+  totalPages: number;
   allFilesProcessed: boolean;
   statusCounts: Record<ProcessingStatus, number>;
   allPages: Array<{
@@ -70,6 +71,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   fileStatus: new Map(),
   fileMetadata: new Map(),
   totalFiles: 0,
+  totalPages: 0,
   allFilesProcessed: false,
   statusCounts: {
     [ProcessingStatus.NOT_STARTED]: 0,
@@ -105,6 +107,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
         processedFiles: newProcessedFiles,
         fileStatus: newFileStatus,
         fileMetadata: newFileMetadata,
+        totalPages: state.totalPages + totalPages,
       };
     });
 
@@ -204,18 +207,17 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
    * Checks whether all files (and their pages) have completed processing.
    */
   checkAllFilesProcessed: () => {
-    const { processedFiles, totalFiles } = get();
+    const { fileStatus, totalFiles } = get();
 
     let completedFiles = 0;
 
-    processedFiles.forEach((pages) => {
-      const allPagesCompleted = Array.from(pages.values()).every(
-        (page) =>
-          page.status === ProcessingStatus.COMPLETED ||
-          page.status === ProcessingStatus.FAILED
-      );
-
-      if (allPagesCompleted) completedFiles++;
+    fileStatus.forEach((status) => {
+      if (
+        status === ProcessingStatus.COMPLETED ||
+        status === ProcessingStatus.FAILED
+      ) {
+        completedFiles++;
+      }
     });
 
     set({ allFilesProcessed: completedFiles === totalFiles });
@@ -257,7 +259,9 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       return {
         processedFiles: new Map(),
         fileStatus: new Map(),
+        fileMetadata: new Map(),
         totalFiles: 0,
+        totalPages: 0,
         allFilesProcessed: false,
         statusCounts: {
           [ProcessingStatus.NOT_STARTED]: 0,
@@ -316,6 +320,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       const newFileStatus = new Map(state.fileStatus);
       const newFileMetadata = new Map(state.fileMetadata);
 
+      const pagesToRemove = newProcessedFiles.get(fileName)?.size || 0;
+
       // Revoke blob URLs for all pages of the file before deletion
       const pages = newProcessedFiles.get(fileName);
       if (pages) {
@@ -335,6 +341,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
         fileStatus: newFileStatus,
         fileMetadata: newFileMetadata,
         totalFiles: Math.max(0, state.totalFiles - 1),
+        totalPages: Math.max(0, state.totalPages - pagesToRemove),
       };
     });
     get().computeStatusCounts();

@@ -1,5 +1,3 @@
-"use client";
-
 import {
   Panel,
   PanelContent,
@@ -16,6 +14,7 @@ import { AlertTriangle } from "lucide-react";
 import { PanelType, usePanelStore } from "@/store/panel";
 import { PANEL_IDS } from "@/constants/panel";
 import { useIsMounted } from "@/hooks/use-is-mounted";
+import { useShallow } from "zustand/shallow";
 
 interface Props {
   handleAbortAndProcess: () => void;
@@ -24,8 +23,14 @@ interface Props {
 export const PanelAbortProcessing: React.FC<Props> = ({
   handleAbortAndProcess,
 }) => {
-  const { getActivePanels, closePanel, openPanel } = usePanelStore();
-  const { right } = getActivePanels();
+  const { sidePanels, closePanel, openPanel } = usePanelStore(
+    useShallow((state) => ({
+      sidePanels: state.sidePanels,
+      closePanel: state.closePanel,
+      openPanel: state.openPanel,
+    }))
+  );
+  const { right } = sidePanels;
   const isMounted = useIsMounted();
 
   const isOpen = right === PANEL_IDS.ABORT_PROCESSING;
@@ -43,7 +48,7 @@ export const PanelAbortProcessing: React.FC<Props> = ({
   return (
     <Panel open={isOpen} onOpenChange={onOpenChange}>
       <PanelContent
-        className="bottom-24 right-8 translate-x-0 translate-y-0 bg-[#0B0B0B] text-white max-w-80 w-full"
+        className="bottom-24 right-8 translate-x-0 translate-y-0 max-w-80 w-full"
         id="panel"
       >
         <PanelHeader className="flex items-start gap-4 pb-4">

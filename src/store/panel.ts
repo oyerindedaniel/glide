@@ -13,14 +13,9 @@ interface PanelState {
   openPanel: (id: string, type: PanelType) => void;
   closePanel: (id: string, type: PanelType) => void;
   resetPanels: () => void;
-  getActivePanels: () => {
-    center: string[];
-    left: string | null;
-    right: string | null;
-  };
 }
 
-export const usePanelStore = create<PanelState>((set, get) => ({
+export const usePanelStore = create<PanelState>((set) => ({
   centerStack: [],
   sidePanels: { left: null, right: null },
 
@@ -69,13 +64,4 @@ export const usePanelStore = create<PanelState>((set, get) => ({
 
   resetPanels: () =>
     set({ centerStack: [], sidePanels: { left: null, right: null } }),
-
-  getActivePanels: () => {
-    const state = get();
-    return {
-      center: state.centerStack,
-      left: state.sidePanels.left,
-      right: state.sidePanels.right,
-    };
-  },
 }));

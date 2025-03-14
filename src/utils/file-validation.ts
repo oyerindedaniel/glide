@@ -1,3 +1,5 @@
+import { FILE_INPUT_TYPES } from "@/constants/processing";
+
 export const MAX_FILENAME_LENGTH = 255; // Maximum safe filename length
 export const FILENAME_SAFE_REGEX = /^[a-zA-Z0-9-_. ]+$/; // Only allow alphanumeric, dash, underscore, dot, and space
 
@@ -28,14 +30,14 @@ export function sanitizeFileName(fileName: string): string {
  * Determines if a file is an image based on its MIME type
  */
 export function isImageFile(fileType: string): boolean {
-  return fileType.startsWith("image/");
+  return fileType.startsWith(FILE_INPUT_TYPES.IMAGE);
 }
 
 /**
  * Determines if a file is a PDF based on its MIME type
  */
 export function isPdfFile(fileType: string): boolean {
-  return fileType === "application/pdf";
+  return fileType === FILE_INPUT_TYPES.PDF;
 }
 
 /**
