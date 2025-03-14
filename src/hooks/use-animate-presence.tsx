@@ -8,10 +8,6 @@ interface AnimatePresenceOptions {
   timeout?: number; // Timeout for animation in ms
 }
 
-/**
- * Hook to manage presence state with animation control.
- * Improved with better cleanup, error handling, and animation state tracking.
- */
 export function useAnimatePresence(
   externalPresence: boolean,
   onAnimate: (presence: boolean) => Promise<void>,

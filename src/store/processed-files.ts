@@ -204,18 +204,17 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
    * Checks whether all files (and their pages) have completed processing.
    */
   checkAllFilesProcessed: () => {
-    const { processedFiles, totalFiles } = get();
+    const { fileStatus, totalFiles } = get();
 
     let completedFiles = 0;
 
-    processedFiles.forEach((pages) => {
-      const allPagesCompleted = Array.from(pages.values()).every(
-        (page) =>
-          page.status === ProcessingStatus.COMPLETED ||
-          page.status === ProcessingStatus.FAILED
-      );
-
-      if (allPagesCompleted) completedFiles++;
+    fileStatus.forEach((status) => {
+      if (
+        status === ProcessingStatus.COMPLETED ||
+        status === ProcessingStatus.FAILED
+      ) {
+        completedFiles++;
+      }
     });
 
     set({ allFilesProcessed: completedFiles === totalFiles });

@@ -228,7 +228,6 @@ const ImageFileItem = memo(
     const handleImageClick = (e: React.MouseEvent) => {
       e.stopPropagation();
       if (firstPage?.url) {
-        console.log("firstPage?.url", firstPage.url);
         openImagePreview(firstPage.url, fileName, fileName);
       }
     };
@@ -374,7 +373,6 @@ export function ProgressUpload() {
 
   const isOpen = center.includes(PANEL_IDS.PROGRESS_UPLOAD);
 
-  // Create a modified onOpenChange handler that won't close when opening image preview
   const handlePanelOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
