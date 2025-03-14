@@ -49,51 +49,6 @@ export class ImageBatchProcessor {
   }
 
   /**
-   * Validates a batch of images
-   */
-  public validateFiles(files: File[]): FileValidationResult {
-    // Check if we're exceeding the max number of files
-    if (files.length > this.maxFilesInBatch) {
-      return {
-        isValid: false,
-        error: `Maximum of ${this.maxFilesInBatch} images allowed per batch`,
-      };
-    }
-
-    // Check total batch size
-    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalSize > this.totalBatchMaxSize) {
-      return {
-        isValid: false,
-        error: `Total batch size exceeds ${Math.round(
-          this.totalBatchMaxSize / (1024 * 1024)
-        )}MB limit`,
-      };
-    }
-
-    // Check individual file sizes and types
-    for (const file of files) {
-      if (file.size > this.singleImageMaxSize) {
-        return {
-          isValid: false,
-          error: `File "${file.name}" exceeds ${Math.round(
-            this.singleImageMaxSize / (1024 * 1024)
-          )}MB limit`,
-        };
-      }
-
-      if (!this.allowedImageTypes.includes(file.type)) {
-        return {
-          isValid: false,
-          error: `File "${file.name}" is not a supported image type`,
-        };
-      }
-    }
-
-    return { isValid: true };
-  }
-
-  /**
    * Process a batch of images
    */
   public async processBatch(
@@ -101,11 +56,6 @@ export class ImageBatchProcessor {
     callbacks: ImageProcessingCallbacks,
     abortSignal: AbortSignal
   ) {
-    const validation = this.validateFiles(files);
-    if (!validation.isValid) {
-      throw new Error(validation.error);
-    }
-
     const state = { totalPages: 0, processedPages: 0 };
 
     state.totalPages = files.length;

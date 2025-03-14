@@ -39,7 +39,7 @@ export const ViewModeSelector = memo(function ViewModeSelector({
                 <span className="sr-only">Scroll Mode</span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="bg-white text-black">
+            <TooltipContent side="bottom">
               <p>Scroll Mode</p>
             </TooltipContent>
           </Tooltip>
@@ -56,7 +56,7 @@ export const ViewModeSelector = memo(function ViewModeSelector({
                 <span className="sr-only">Panel Mode</span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="bg-white text-black">
+            <TooltipContent side="bottom">
               <p>Panel Mode</p>
             </TooltipContent>
           </Tooltip>

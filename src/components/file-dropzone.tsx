@@ -33,7 +33,11 @@ import {
   MAX_CONCURRENT_FILES,
 } from "@/constants/processing";
 import { useShallow } from "zustand/shallow";
-import { sanitizeFileName, validateFile } from "@/utils/file-validation";
+import {
+  sanitizeFileName,
+  validateFile,
+  validateFileBatch,
+} from "@/utils/file-validation";
 import { PDFBatchProcessor } from "@/classes/pdf-processor";
 import { ImageBatchProcessor } from "@/classes/image-processor";
 
@@ -272,49 +276,38 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
 
       const uploadedFiles = Array.from(files);
 
-      // Validate general file types first
-      for (const file of uploadedFiles) {
-        const validation = validateFile(file, ALLOWED_FILE_TYPES);
-        if (!validation.isValid) {
-          toast.error(`${file.name}: ${validation.error}`);
-          processingRef.current = false;
-          return;
+      const validationResult = validateFileBatch(
+        uploadedFiles,
+        ALLOWED_FILE_TYPES,
+        {
+          fileTypeValidation: true,
         }
-      }
+      );
 
-      // Create sanitized files array
-      const sanitizedFiles = uploadedFiles.map((file) => {
-        const sanitizedName = sanitizeFileName(file.name);
-        return new File([file], sanitizedName, { type: file.type });
-      });
-
-      // Check for duplicate sanitized names
-      const fileNames = new Set<string>();
-      for (const file of sanitizedFiles) {
-        if (fileNames.has(file.name)) {
-          toast.error("Duplicate file names detected");
-          processingRef.current = false;
-          return;
-        }
-        fileNames.add(file.name);
-      }
-
-      // Check file types
-      const fileTypes = new Set(sanitizedFiles.map((file) => file.type));
-      if (fileTypes.size > 1) {
-        toast("Please upload files of the same type (either images or PDF).");
+      if (!validationResult.isValid) {
+        toast.error(validationResult.error);
         processingRef.current = false;
         return;
       }
 
+      const sanitizedFiles = validationResult.sanitizedFiles!;
+
       // Check for already processed files
+      const alreadyProcessedFiles = [];
       for (const file of sanitizedFiles) {
         if (processedFiles.has(file.name)) {
           const pages = processedFiles.get(file.name);
           if (pages && Array.from(pages.values()).every((page) => page.url)) {
-            toast(`File "${file.name}" is already uploaded.`);
-            return;
+            alreadyProcessedFiles.push(file.name);
           }
+        }
+      }
+
+      if (alreadyProcessedFiles.length > 0) {
+        toast(`Files already uploaded: ${alreadyProcessedFiles.join(", ")}`);
+        if (alreadyProcessedFiles.length === sanitizedFiles.length) {
+          processingRef.current = false;
+          return;
         }
       }
 
@@ -326,11 +319,9 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
       abortControllerRef.current = new AbortController();
       const { signal: abortSignal } = abortControllerRef.current;
 
-      const isPDF = fileTypes.has(FILE_INPUT_TYPES.PDF);
-      const isImage =
-        fileTypes.has(FILE_INPUT_TYPES.PNG) ||
-        fileTypes.has(FILE_INPUT_TYPES.JPEG) ||
-        fileTypes.has(FILE_INPUT_TYPES.WEBP);
+      const fileCategory = validationResult.fileCategory;
+      const isPDF = fileCategory === "pdf";
+      const isImage = fileCategory === "image";
 
       // Event listeners
       const onFileAdd = (
@@ -338,9 +329,9 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
         totalPages: number,
         { size, type }: { size: number; type: string }
       ) => {
-        // startTransition(() => {
-        addFile(fileName, totalPages, { size, type });
-        // });
+        startTransition(() => {
+          addFile(fileName, totalPages, { size, type });
+        });
       };
 
       const onPageProcessed = function (

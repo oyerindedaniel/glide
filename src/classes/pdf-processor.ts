@@ -513,44 +513,6 @@ export class PDFBatchProcessor {
   }
 
   /**
-   * Validates a file or batch of files against size limits
-   */
-  public validateFiles(files: File[]): FileValidationResult {
-    if (files.length > this.maxFilesInBatch) {
-      return {
-        isValid: false,
-        error: `Maximum of ${this.maxFilesInBatch} PDF files allowed per batch`,
-      };
-    }
-
-    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalSize > this.totalBatchMaxSize) {
-      return {
-        isValid: false,
-        error: `Total batch size exceeds ${Math.round(
-          this.totalBatchMaxSize / (1024 * 1024)
-        )}MB limit`,
-      };
-    }
-
-    const maxSizePerFile =
-      files.length === 1 ? this.singleFileMaxSize : this.batchFileMaxSize;
-    for (const file of files) {
-      if (file.size > maxSizePerFile) {
-        const maxSizeMB = Math.round(maxSizePerFile / (1024 * 1024));
-        return {
-          isValid: false,
-          error: `File "${file.name}" exceeds ${maxSizeMB}MB limit${
-            files.length > 1 ? " for batch processing" : ""
-          }`,
-        };
-      }
-    }
-
-    return { isValid: true };
-  }
-
-  /**
    * Process a batch of files with concurrency management
    */
   public async processBatch(
@@ -580,11 +542,6 @@ export class PDFBatchProcessor {
       throw new Error(
         "PDF processing is only available in browser environments"
       );
-    }
-
-    const validation = this.validateFiles(files);
-    if (!validation.isValid) {
-      throw new Error(validation.error);
     }
 
     const limit = pLimit(this.maxConcurrentFiles);

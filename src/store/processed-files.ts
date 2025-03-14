@@ -30,6 +30,7 @@ interface ProcessedFileState {
     pageNumber: number;
     url: string;
     status: ProcessingStatus;
+    fileType: string;
   }>;
 
   // Methods to manage the store
@@ -221,15 +222,20 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   },
 
   updateAllPages: () => {
-    const { processedFiles } = get();
+    const { processedFiles, fileMetadata } = get();
     const pages = Array.from(processedFiles.entries()).flatMap(
       ([fileName, pageMap]) =>
-        Array.from(pageMap.entries()).map(([pageNumber, { url, status }]) => ({
-          fileName,
-          pageNumber,
-          url,
-          status,
-        }))
+        Array.from(pageMap.entries()).map(([pageNumber, { url, status }]) => {
+          const fileType = fileMetadata.get(fileName)?.type || "";
+
+          return {
+            fileName,
+            pageNumber,
+            url,
+            status,
+            fileType,
+          };
+        })
     );
 
     set({ allPages: pages });

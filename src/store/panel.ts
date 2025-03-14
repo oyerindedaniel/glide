@@ -14,7 +14,7 @@ interface PanelState {
   closePanel: (id: string, type: PanelType) => void;
   resetPanels: () => void;
   getActivePanels: () => {
-    center: string | null;
+    center: string[];
     left: string | null;
     right: string | null;
   };
@@ -29,9 +29,14 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       if (type === PanelType.CENTER) {
         let newStack = [...state.centerStack];
 
-        // Removes existing occurrence to maintain unique stack behavior
+        // Remove if it already exists (to avoid duplicates)
         newStack = newStack.filter((panel) => panel !== id);
+
         newStack.push(id);
+
+        if (newStack.length > 3) {
+          newStack = newStack.slice(-3);
+        }
 
         return { centerStack: newStack };
       } else if (type === PanelType.LEFT) {
@@ -68,10 +73,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
   getActivePanels: () => {
     const state = get();
     return {
-      center:
-        state.centerStack.length > 0
-          ? state.centerStack[state.centerStack.length - 1]
-          : null,
+      center: state.centerStack,
       left: state.sidePanels.left,
       right: state.sidePanels.right,
     };

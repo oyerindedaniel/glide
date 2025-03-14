@@ -8,6 +8,7 @@ import {
   PanelBody,
   PanelHeader,
   PanelDescription,
+  PanelIcon,
 } from "../ui/panel";
 import {
   Accordion,
@@ -42,6 +43,8 @@ import {
   restrictToParentElement,
 } from "@dnd-kit/modifiers";
 import { useShallow } from "zustand/shallow";
+import { Upload, Search } from "lucide-react";
+import { useImagePreviewStore } from "@/store/image-preview";
 
 type Sensor = SensorDescriptor<SensorOptions>[];
 
@@ -67,35 +70,61 @@ const PageItem = memo(
     page: number;
     pageData: { status: ProcessingStatus; url: string | null };
     disabled: boolean;
-  }) => (
-    <SortableItem
-      key={`${fileName}-${page}`}
-      id={`${fileName}-${page}`}
-      disabled={disabled}
-    >
-      <div
-        className="flex items-center gap-5 justify-between py-2 w-full"
-        style={{
-          contentVisibility: "auto",
-          containIntrinsicSize: "54px",
-        }}
+  }) => {
+    const { openImagePreview } = useImagePreviewStore();
+
+    const handleImageClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (pageData.url) {
+        openImagePreview(
+          pageData.url,
+          `Page ${page}`,
+          `${fileName} - Page ${page}`
+        );
+      }
+    };
+
+    return (
+      <SortableItem
+        key={`${fileName}-${page}`}
+        id={`${fileName}-${page}`}
+        disabled={disabled}
       >
-        <div className="inline-flex items-center gap-5">
-          <Image
-            src={pageData.url || "/PDF-upload-icon.svg"}
-            className="w-10 h-10 object-cover rounded-sm"
-            alt={`Page ${page}`}
-            width={40}
-            height={40}
-          />
-          <span>{`Page ${page}`}</span>
+        <div
+          className="flex items-center gap-5 justify-between py-2 w-full"
+          style={{
+            contentVisibility: "auto",
+            containIntrinsicSize: "54px",
+          }}
+        >
+          <div className="inline-flex items-center gap-5">
+            <div className="relative w-10 h-10 overflow-hidden rounded-sm group">
+              <Image
+                src={pageData.url || "/PDF-upload-icon.svg"}
+                className="w-10 h-10 object-cover cursor-pointer hover:scale-110 transition-transform duration-300"
+                alt={`Page ${page}`}
+                width={40}
+                height={40}
+                onClick={handleImageClick}
+              />
+              {pageData.url && (
+                <div
+                  className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                  onClick={handleImageClick}
+                >
+                  <Search className="h-4 w-4 text-white" />
+                </div>
+              )}
+            </div>
+            <span>{`Page ${page}`}</span>
+          </div>
+          <ProgressPulseRoot status={pageData.status}>
+            <ProgressPulseContent />
+          </ProgressPulseRoot>
         </div>
-        <ProgressPulseRoot status={pageData.status}>
-          <ProgressPulseContent />
-        </ProgressPulseRoot>
-      </div>
-    </SortableItem>
-  )
+      </SortableItem>
+    );
+  }
 );
 PageItem.displayName = "PageItem";
 
@@ -162,8 +191,8 @@ const PdfFileItem = memo(
       onValueChange={onAccordionChange}
     >
       <AccordionItem value={fileName} className="w-full">
-        <AccordionTrigger>
-          <div className="inline-flex items-center gap-8">
+        <AccordionTrigger className="w-full">
+          <div className="inline-flex items-center gap-8 w-full">
             <span>{fileName}</span>
             <ProgressPulseRoot status={status}>
               <ProgressPulseContent />
@@ -194,17 +223,37 @@ const ImageFileItem = memo(
     pages: Map<number, { status: ProcessingStatus; url: string | null }>;
   }) => {
     const firstPage = Array.from(pages.values())[0];
+    const { openImagePreview } = useImagePreviewStore();
+
+    const handleImageClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (firstPage?.url) {
+        console.log("firstPage?.url", firstPage.url);
+        openImagePreview(firstPage.url, fileName, fileName);
+      }
+    };
 
     return (
       <div className="flex items-center gap-5 justify-between py-2">
         <div className="inline-flex items-center gap-5">
-          <Image
-            src={firstPage?.url || "/JPG-upload-icon.svg"}
-            alt={fileName}
-            className="w-10 h-10 object-cover rounded-sm"
-            width={30}
-            height={30}
-          />
+          <div className="relative w-10 h-10 overflow-hidden rounded-sm group">
+            <Image
+              src={firstPage?.url || "/JPG-upload-icon.svg"}
+              alt={fileName}
+              className="w-10 h-10 object-cover cursor-pointer hover:scale-110 transition-transform duration-300"
+              width={30}
+              height={30}
+              onClick={handleImageClick}
+            />
+            {firstPage?.url && (
+              <div
+                className="absolute inset-0 flex items-center justify-center bg-black/80 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                onClick={handleImageClick}
+              >
+                <Search className="h-4 w-4 text-white" />
+              </div>
+            )}
+          </div>
           <span>{fileName}</span>
         </div>
         <ProgressPulseRoot status={firstPage?.status}>
@@ -277,15 +326,21 @@ const UploadPanelHeader = memo(
     processedFiles: Map<string, Map<number, PageStatus>>;
     allFilesProcessed: boolean;
   }) => (
-    <PanelHeader>
-      <PanelTitle className="text-lg font-semibold">
-        File Upload In Progress
-      </PanelTitle>
-      <PanelDescription className="text-sm text-gray-400">
-        {allFilesProcessed
-          ? "All files have been successfully processed!"
-          : `Processing ${processedFiles.size} of ${totalFiles} files — Hang tight, we're almost done!`}
-      </PanelDescription>
+    <PanelHeader className="flex items-start gap-4 pb-4">
+      <PanelIcon>
+        <Upload aria-hidden="true" className="h-3 w-3" />
+        <span className="sr-only">Upload</span>
+      </PanelIcon>
+      <div>
+        <PanelTitle className="text-lg font-semibold">
+          File Upload In Progress
+        </PanelTitle>
+        <PanelDescription className="text-sm text-gray-400">
+          {allFilesProcessed
+            ? "All files have been successfully processed!"
+            : `Processing ${processedFiles.size} of ${totalFiles} files — Hang tight, we're almost done!`}
+        </PanelDescription>
+      </div>
     </PanelHeader>
   )
 );
@@ -317,12 +372,12 @@ export function ProgressUpload() {
   const [openAccordions, setOpenAccordions] = useState<string[]>([]);
   const { center } = getActivePanels();
 
-  const isOpen = center === PANEL_IDS.PROGRESS_UPLOAD;
+  const isOpen = center.includes(PANEL_IDS.PROGRESS_UPLOAD);
 
-  // Panel open/close handler
-  const onOpenChange = useCallback(
-    (newOpen: boolean) => {
-      if (newOpen) {
+  // Create a modified onOpenChange handler that won't close when opening image preview
+  const handlePanelOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
         openPanel(PANEL_IDS.PROGRESS_UPLOAD, PanelType.CENTER);
       } else {
         closePanel(PANEL_IDS.PROGRESS_UPLOAD, PanelType.CENTER);
@@ -334,9 +389,9 @@ export function ProgressUpload() {
   // Auto-close panel when no files
   useEffect(() => {
     if (totalFiles <= 0) {
-      onOpenChange(false);
+      handlePanelOpenChange(false);
     }
-  }, [onOpenChange, totalFiles]);
+  }, [handlePanelOpenChange, totalFiles]);
 
   // File reordering handler
   const handleFileDragEnd = useCallback(
@@ -392,61 +447,63 @@ export function ProgressUpload() {
   );
 
   return (
-    <Panel open={isOpen} onOpenChange={onOpenChange} withOverlay>
-      <PanelContent
-        className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 bg-black text-white max-w-150 w-full"
-        id="panel"
-      >
-        <UploadPanelHeader
-          totalFiles={totalFiles}
-          processedFiles={processedFiles}
-          allFilesProcessed={allFilesProcessed}
-        />
+    <>
+      <Panel open={isOpen} onOpenChange={handlePanelOpenChange} withOverlay>
+        <PanelContent
+          className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 max-w-150 w-full"
+          id="panel"
+        >
+          <UploadPanelHeader
+            totalFiles={totalFiles}
+            processedFiles={processedFiles}
+            allFilesProcessed={allFilesProcessed}
+          />
 
-        <PanelBody className="text-sm">
-          <h2 className="my-2">Total File(s): {totalFiles}</h2>
-          <ScrollArea className="h-fit w-full pr-3">
-            <div className="max-h-75">
-              <SortableRoot
-                sensors={sensors}
-                items={Array.from(processedFiles.keys()).map((fileName) => ({
-                  id: fileName,
-                }))}
-                onDragStart={handleDragStart}
-                onDragEnd={handleFileDragEnd}
-                modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-              >
-                <SortableContent>
-                  {Array.from(processedFiles.entries()).map(
-                    ([fileName, pages]) => {
-                      const fileType = fileMetadata.get(fileName)?.type;
-                      const status = fileStatus.get(fileName);
-                      return (
-                        <FileItem
-                          key={fileName}
-                          fileName={fileName}
-                          pages={pages}
-                          fileType={fileType}
-                          status={status!}
-                          sensors={sensors}
-                          openAccordions={openAccordions}
-                          onAccordionChange={setOpenAccordions}
-                          onPageDragEnd={handlePageDragEnd(fileName)}
-                          disabled={isSortingDisabled(
-                            status!,
-                            processedFiles.size
-                          )}
-                        />
-                      );
-                    }
-                  )}
-                </SortableContent>
-              </SortableRoot>
-            </div>
-          </ScrollArea>
-        </PanelBody>
-      </PanelContent>
-    </Panel>
+          <PanelBody className="text-sm pt-4">
+            <h2 className="my-2">Total File(s): {totalFiles}</h2>
+            <ScrollArea className="h-fit w-full pr-3">
+              <div className="max-h-75">
+                <SortableRoot
+                  sensors={sensors}
+                  items={Array.from(processedFiles.keys()).map((fileName) => ({
+                    id: fileName,
+                  }))}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleFileDragEnd}
+                  modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+                >
+                  <SortableContent>
+                    {Array.from(processedFiles.entries()).map(
+                      ([fileName, pages]) => {
+                        const fileType = fileMetadata.get(fileName)?.type;
+                        const status = fileStatus.get(fileName);
+                        return (
+                          <FileItem
+                            key={fileName}
+                            fileName={fileName}
+                            pages={pages}
+                            fileType={fileType}
+                            status={status!}
+                            sensors={sensors}
+                            openAccordions={openAccordions}
+                            onAccordionChange={setOpenAccordions}
+                            onPageDragEnd={handlePageDragEnd(fileName)}
+                            disabled={isSortingDisabled(
+                              status!,
+                              processedFiles.size
+                            )}
+                          />
+                        );
+                      }
+                    )}
+                  </SortableContent>
+                </SortableRoot>
+              </div>
+            </ScrollArea>
+          </PanelBody>
+        </PanelContent>
+      </Panel>
+    </>
   );
 }
 
