@@ -328,7 +328,7 @@ const PanelContent = React.forwardRef<
           aria-labelledby={titleId}
           aria-describedby={descriptionId}
           className={cn(
-            "fixed p-6 shadow-lg sm:rounded-xl z-1000 border-neutral-800 bg-[#0B0B0B] text-white",
+            "fixed shadow-lg sm:rounded-xl z-1000 border-neutral-800 bg-[#0B0B0B] text-white",
             animationClass,
             className
           )}
@@ -359,7 +359,10 @@ const PanelHeader = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/header  border-b border-neutral-800", className)}
+          className={cn(
+            "group/header p-4 border-b border-neutral-800",
+            className
+          )}
           {...props}
         />
       );
@@ -376,7 +379,7 @@ const PanelBody = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/body", className)}
+          className={cn("group/body p-4", className)}
           {...props}
         />
       );
@@ -393,7 +396,7 @@ const PanelFooter = React.memo(
         <div
           data-state={state}
           ref={ref}
-          className={cn("group/footer", className)}
+          className={cn("group/footer p-4", className)}
           {...props}
         />
       );
@@ -440,7 +443,7 @@ const PanelDescription = React.memo(
       <p
         ref={ref}
         id={finalId}
-        className={cn("text-sm text-muted-foreground", className)}
+        className={cn("text-sm text-gray-400", className)}
         {...props}
       />
     );

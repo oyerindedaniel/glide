@@ -13,7 +13,7 @@ const MAX_PAGE_RETRIES = 3;
 const BASE_DELAY_MS = 50;
 
 const FILE_INPUT_TYPES = {
-  IMAGE: "image/*",
+  IMAGE: "image/",
   JPEG: "image/jpeg",
   PNG: "image/png",
   WEBP: "image/webp",

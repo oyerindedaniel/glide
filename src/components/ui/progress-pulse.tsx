@@ -1,13 +1,7 @@
 "use client";
 
 import * as React from "react";
-import {
-  useState,
-  useRef,
-  useLayoutEffect,
-  createContext,
-  useContext,
-} from "react";
+import { useRef, useLayoutEffect, createContext, useContext } from "react";
 import { cn } from "@/lib/utils";
 import { ProcessingStatus } from "@/store/processed-files";
 
@@ -40,20 +34,28 @@ const statusConfig = {
   [ProcessingStatus.NOT_STARTED]: {
     text: "Not Started",
     bgColor: "bg-gray-600",
+    textColor: "text-white",
+    animatePulse: false,
   },
   [ProcessingStatus.PROCESSING]: {
     text: "Pending",
     bgColor: "bg-blue-600",
+    textColor: "text-white",
+    animatePulse: true,
   },
   [ProcessingStatus.COMPLETED]: {
     text: "Completed",
     bgColor: "bg-green-600",
+    textColor: "text-white",
+    animatePulse: false,
   },
   [ProcessingStatus.FAILED]: {
     text: "Failed",
     bgColor: "bg-red-600",
+    textColor: "text-white",
+    animatePulse: false,
   },
-};
+} as const;
 
 interface ProgressPulseContentProps {
   className?: string;
@@ -61,17 +63,18 @@ interface ProgressPulseContentProps {
 
 const widthCache = new Map<string, number>();
 
-const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
-  className,
-}) => {
-  const { status } = useContext(ProgressPulseContext);
-  const [width, setWidth] = useState(0);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const lastWidthRef = useRef<number>(0);
+const ProgressPulseContent = React.memo<ProgressPulseContentProps>(
+  ({ className }) => {
+    const { status } = useContext(ProgressPulseContext);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const prevStatusRef = useRef<ProcessingStatus | null>(null);
 
-  useLayoutEffect(() => {
-    const container = containerRef?.current;
-    if (container) {
+    useLayoutEffect(() => {
+      const container = containerRef?.current;
+      if (!container) return;
+
+      if (prevStatusRef.current === status) return;
+
       let newWidth: number;
 
       if (widthCache.has(status)) {
@@ -79,50 +82,57 @@ const ProgressPulseContent: React.FC<ProgressPulseContentProps> = ({
       } else {
         container.style.transition = "none";
         container.style.width = "auto";
+        container.style.opacity = "1";
+        container.style.position = "absolute";
+        container.style.visibility = "hidden";
         newWidth = container.offsetWidth;
         widthCache.set(status, newWidth);
+
+        container.style.position = "";
+        container.style.visibility = "";
       }
 
-      if (lastWidthRef.current === newWidth) return;
-      lastWidthRef.current = newWidth;
-
       container.style.width = "0px";
-      container.style.transition = "width 0.5s ease";
-      React.startTransition(() => {
-        setWidth(newWidth);
-      });
-    }
-  }, [status]);
+      container.style.opacity = "0";
 
-  const { text, bgColor } = statusConfig[status];
+      void container.offsetWidth;
 
-  return (
-    <div
-      ref={containerRef}
-      role="status"
-      aria-live="polite"
-      className={cn(
-        "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-white whitespace-nowrap overflow-hidden",
-        bgColor,
-        className
-      )}
-      style={{
-        width: `${width}px`,
-        transition: "width 0.5s ease",
-      }}
-    >
-      <span
-        className="inline-block"
-        style={{
-          transform: `translateX(${width === 0 ? "100%" : "0"})`,
-          transition: "transform 0.5s ease-in-out",
-        }}
+      container.style.transition = "width 0.5s ease, opacity 0.6s ease-in";
+      container.style.width = `${newWidth}px`;
+      container.style.opacity = "1";
+
+      prevStatusRef.current = status;
+    }, [status]);
+
+    const { text, bgColor, textColor, animatePulse } = statusConfig[status];
+
+    return (
+      <div
+        ref={containerRef}
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 text-white whitespace-nowrap overflow-hidden",
+          bgColor,
+          textColor,
+          animatePulse && "animate-pulse",
+          className
+        )}
       >
-        {text}
-      </span>
-    </div>
-  );
-};
+        <span
+          className="inline-block"
+          style={{
+            transform: "translateX(0)",
+            opacity: 1,
+            transition: "transform 0.5s ease-in-out, opacity 0.7s ease-in-out",
+          }}
+        >
+          {text}
+        </span>
+      </div>
+    );
+  }
+);
 ProgressPulseContent.displayName = "ProgressPulseContent";
 
 export { ProgressPulseRoot, ProgressPulseContent };

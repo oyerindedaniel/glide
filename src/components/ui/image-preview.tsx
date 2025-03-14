@@ -6,6 +6,7 @@ import {
   PanelIcon,
   PanelHeader,
   PanelTitle,
+  PanelBody,
 } from "./panel";
 import {
   Maximize2,
@@ -45,9 +46,9 @@ export function ImagePreview() {
       }))
     );
 
-  const { center } = usePanelStore(
+  const { centerStack } = usePanelStore(
     useShallow((state) => ({
-      center: state.getActivePanels().center,
+      centerStack: state.centerStack,
     }))
   );
 
@@ -80,7 +81,7 @@ export function ImagePreview() {
       return { currentIndex, hasPrevious, hasNext, previousPage, nextPage };
     }, [previewImage?.src, allPages]);
 
-  const isOpen = center.includes(PANEL_IDS.IMAGE_PREVIEW);
+  const isOpen = centerStack.includes(PANEL_IDS.IMAGE_PREVIEW);
 
   const handleZoomIn = () => {
     if (zoomLevel < ZOOM_LEVELS.length - 1) {
@@ -142,7 +143,7 @@ export function ImagePreview() {
         className="left-2/4 top-2/4 -translate-x-2/4 -translate-y-2/4 max-w-[90vw] max-h-[90vh] w-auto h-auto p-0 flex flex-col"
         panelType="center"
       >
-        <PanelHeader className="flex items-center justify-between p-4">
+        <PanelHeader className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <PanelIcon>
               <Maximize2 className="h-3 w-3" />
@@ -203,80 +204,81 @@ export function ImagePreview() {
             </TooltipProvider>
           </div>
         </PanelHeader>
-
-        <div className="relative overflow-auto flex-grow p-4 flex items-center justify-center bg-neutral-950">
-          {/* Left Navigation Button */}
-          {hasPrevious && (
-            <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handlePrevious}
-                      size="icon"
-                      variant="ghost"
-                      className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
-                    >
-                      <ChevronLeft aria-hidden="true" className="h-6 w-6" />
-                      <span className="sr-only">Previous Image</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <p>Previous Image</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          )}
-
-          {/* Right Navigation Button */}
-          {hasNext && (
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handleNext}
-                      size="icon"
-                      variant="ghost"
-                      className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
-                    >
-                      <ChevronRight aria-hidden="true" className="h-6 w-6" />
-                      <span className="sr-only">Next Image</span>
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="left">
-                    <p>Next Image</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-          )}
-
-          <div
-            className={cn(
-              "transition-transform duration-300 ease-out",
-              currentZoom > 1 && "cursor-move"
+        <PanelBody>
+          <div className="relative overflow-auto flex-grow flex items-center justify-center bg-neutral-950">
+            {/* Left Navigation Button */}
+            {hasPrevious && (
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handlePrevious}
+                        size="icon"
+                        variant="ghost"
+                        className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
+                      >
+                        <ChevronLeft aria-hidden="true" className="h-6 w-6" />
+                        <span className="sr-only">Previous Image</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">
+                      <p>Previous Image</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
             )}
-            onClick={(e) => e.stopPropagation()}
-          >
+
+            {/* Right Navigation Button */}
+            {hasNext && (
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={handleNext}
+                        size="icon"
+                        variant="ghost"
+                        className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
+                      >
+                        <ChevronRight aria-hidden="true" className="h-6 w-6" />
+                        <span className="sr-only">Next Image</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      <p>Next Image</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            )}
+
             <div
-              className="transition-transform duration-300"
-              style={{ "--scale": currentZoom } as React.CSSProperties}
+              className={cn(
+                "transition-transform duration-300 ease-out",
+                currentZoom > 1 && "cursor-move"
+              )}
+              onClick={(e) => e.stopPropagation()}
             >
-              <Image
-                src={previewImage.src}
-                alt={previewImage.alt}
-                width={1200}
-                height={800}
-                className="max-w-full h-auto object-contain max-h-[calc(90vh_-_140px)] scale-[var(--scale)]"
-                quality={100}
-                priority
-                onClick={(e) => e.stopPropagation()}
-              />
+              <div
+                className="transition-transform duration-300"
+                style={{ "--scale": currentZoom } as React.CSSProperties}
+              >
+                <Image
+                  src={previewImage.src}
+                  alt={previewImage.alt}
+                  width={1200}
+                  height={800}
+                  className="max-w-full h-auto object-contain max-h-[calc(90vh_-_140px)] scale-[var(--scale)]"
+                  quality={100}
+                  priority
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        </PanelBody>
 
         {/* Image Counter */}
         {currentIndex >= 0 && (
