@@ -1,25 +1,33 @@
 /* eslint-disable @typescript-eslint/no-unsafe-function-type */
 import { ProcessingStatus } from "@/store/processed-files";
-import { WorkerMessageType } from "@/types/processor";
+import { DisplayInfo, WorkerMessageType } from "@/types/processor";
 import { PageProcessingConfig } from "@/types/processor";
-import { delay } from "@/utils/app";
+import { delay, isBrowserWithWorker } from "@/utils/app";
 import pLimit from "p-limit";
 import { toast } from "sonner";
-import { MAX_PAGE_RETRIES, BASE_DELAY_MS } from "@/constants/processing";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 import { PDFWorkerPool } from "../worker/pdf.worker-pool";
+import logger from "@/utils/logger";
+import {
+  PDF_CACHE_MAX_AGE,
+  PDF_CACHE_CLEANUP_INTERVAL,
+  DEFAULT_MAX_CONCURRENT_FILES,
+  DEFAULT_PAGE_PROCESSING_SLOTS,
+  PDF_CONFIG_SMALL,
+  PDF_CONFIG_MEDIUM,
+  PDF_CONFIG_LARGE,
+  MAX_PAGE_RETRIES,
+  BASE_DELAY_MS,
+} from "@/config/app";
+import recoveryEmitter from "@/utils/recovery-event-emitter";
+import {
+  RecoveryEventType,
+  PageProcessedRecoveryData,
+  PDFInitializedRecoveryData,
+} from "@/types/processor";
 
-// Check if we're in a browser environment
-const isBrowser =
-  typeof window !== "undefined" && typeof Worker !== "undefined";
-
-// Constants for file size management
-const SIZE_LIMITS = {
-  SINGLE_PDF_MAX_SIZE: 100 * 1024 * 1024, // 100MB
-  BATCH_PDF_MAX_SIZE: 50 * 1024 * 1024, // 50MB
-  TOTAL_BATCH_MAX_SIZE: 500 * 1024 * 1024, // 500MB
-  MAX_FILES_IN_BATCH: 10, // 10 files
-};
+// Check if we're in a browser environment with Web Workers
+const isBrowser = isBrowserWithWorker();
 
 interface ProcessingOptions {
   pageProcessingSlots: number;
@@ -32,23 +40,11 @@ interface ProcessingOptions {
 }
 
 const DEFAULT_OPTIONS: ProcessingOptions = {
-  pageProcessingSlots: 2,
+  pageProcessingSlots: DEFAULT_PAGE_PROCESSING_SLOTS,
   processingConfigs: {
-    small: {
-      scale: 2.0,
-      quality: 0.85,
-      maxDimension: 2500,
-    },
-    medium: {
-      scale: 1.5,
-      quality: 0.8,
-      maxDimension: 2000,
-    },
-    large: {
-      scale: 1.2,
-      quality: 0.75,
-      maxDimension: 1600,
-    },
+    small: PDF_CONFIG_SMALL,
+    medium: PDF_CONFIG_MEDIUM,
+    large: PDF_CONFIG_LARGE,
   },
 };
 
@@ -82,11 +78,7 @@ export class PDFProcessor {
     pageNumber: number;
     resolve: Function;
     reject: Function;
-    displayInfo?: {
-      devicePixelRatio: number;
-      containerWidth: number;
-      containerHeight?: number;
-    };
+    displayInfo?: DisplayInfo;
   }>;
   private activeProcessing: number;
   private processingConfig: PageProcessingConfig;
@@ -95,6 +87,8 @@ export class PDFProcessor {
   private abortSignal?: AbortSignal;
   private cacheCleanupInterval: NodeJS.Timeout | null = null;
   private processingPages: Set<number> = new Set();
+  private pageRecoveryUnsubscribe: (() => void) | undefined;
+  private pdfInitRecoveryUnsubscribe: (() => void) | undefined;
 
   constructor(
     options: Partial<ProcessingOptions> = {},
@@ -121,10 +115,11 @@ export class PDFProcessor {
       .then((worker) => {
         this.worker = worker;
         this.setupWorkerMessageHandler();
+        this.setupRecoveryEventHandlers();
 
         worker.onerror = (event) => {
           const error = new Error(`Worker error: ${event.message}`);
-          console.log(`Worker error: ${event.message}`);
+          logger.error(`Worker error: ${event.message}`);
           this.onError?.(error);
         };
       })
@@ -154,7 +149,7 @@ export class PDFProcessor {
     this.worker.onmessage = (e) => {
       // Add debugging for each message received
       const msgId = Math.random().toString(36).substring(2, 8);
-      console.log(
+      logger.log(
         `[${msgId}] PDFProcessor received message: ${e.data.type}, Page: ${
           e.data.pageNumber || "N/A"
         }`
@@ -162,7 +157,7 @@ export class PDFProcessor {
 
       if (e.data.type === WorkerMessageType.PageProcessed) {
         const { pageNumber, blobData, dimensions } = e.data;
-        console.log(
+        logger.log(
           `[${msgId}] Processing page ${pageNumber}, creating blob URL...`
         );
 
@@ -182,7 +177,7 @@ export class PDFProcessor {
         );
 
         if (queueItems.length > 0) {
-          console.log(
+          logger.log(
             `[${msgId}] Found ${queueItems.length} queue items for page ${pageNumber}, resolving all...`
           );
 
@@ -196,7 +191,7 @@ export class PDFProcessor {
             (item) => item.pageNumber !== pageNumber
           );
         } else {
-          console.warn(
+          logger.warn(
             `[${msgId}] No queue items found for page ${pageNumber}!`
           );
         }
@@ -204,7 +199,7 @@ export class PDFProcessor {
         // Clean up processing tracking
         this.processingPages.delete(pageNumber);
         this.activeProcessing--;
-        console.log(
+        logger.log(
           `[${msgId}] Active processing: ${
             this.activeProcessing
           }, Queue length: ${
@@ -221,7 +216,7 @@ export class PDFProcessor {
           );
 
           if (queueItems.length > 0) {
-            console.log(
+            logger.log(
               `Rejecting ${queueItems.length} queue items for page ${e.data.pageNumber} due to error`
             );
             queueItems.forEach((item) => {
@@ -249,15 +244,14 @@ export class PDFProcessor {
   private startCacheCleanupInterval() {
     this.cacheCleanupInterval = setInterval(() => {
       const now = Date.now();
-      const maxAge = 10 * 60 * 1000; // 10 minutes
 
       for (const [key, value] of this.pageCache.entries()) {
-        if (now - value.lastAccessed > maxAge) {
+        if (now - value.lastAccessed > PDF_CACHE_MAX_AGE) {
           URL.revokeObjectURL(value.url);
           this.pageCache.delete(key);
         }
       }
-    }, 60 * 1000); // Checks every minute
+    }, PDF_CACHE_CLEANUP_INTERVAL);
   }
 
   private getProcessingConfig(fileSize: number): PageProcessingConfig {
@@ -294,8 +288,7 @@ export class PDFProcessor {
 
       this.activeProcessing++;
 
-      // Log that we're starting to process this page
-      console.log(
+      logger.log(
         `Starting to process page ${nextItem.pageNumber}, active: ${this.activeProcessing}, queue: ${this.processingQueue.length}`
       );
 
@@ -468,6 +461,15 @@ export class PDFProcessor {
     // Clear tracking sets
     this.processingPages.clear();
 
+    // Unsubscribe from recovery events
+    if (this.pageRecoveryUnsubscribe) {
+      this.pageRecoveryUnsubscribe();
+    }
+
+    if (this.pdfInitRecoveryUnsubscribe) {
+      this.pdfInitRecoveryUnsubscribe();
+    }
+
     if (this.worker) {
       this.worker.postMessage({
         type: WorkerMessageType.Cleanup,
@@ -486,29 +488,115 @@ export class PDFProcessor {
       clearInterval(this.cacheCleanupInterval);
     }
   }
+
+  /**
+   * Set up recovery event handlers
+   */
+  private setupRecoveryEventHandlers(): void {
+    // Handle recovered page processed events
+    this.pageRecoveryUnsubscribe = recoveryEmitter.on(
+      RecoveryEventType.PageProcessed,
+      (data) => {
+        // Type assertion to ensure we have the right data type
+        const pageData = data as PageProcessedRecoveryData;
+        if (!pageData.clientId) return;
+
+        logger.log(
+          `[RecoverySystem] Received orphaned PageProcessed event for page ${pageData.pageNumber}, client ${pageData.clientId}`
+        );
+
+        // If this is our client, try to recover the page result
+        const orphanedResult = PDFWorkerPool.getInstance().getOrphanedResult(
+          pageData.recoveryKey
+        );
+
+        if (
+          orphanedResult &&
+          "dimensions" in orphanedResult &&
+          "blobData" in orphanedResult
+        ) {
+          const { pageNumber, blobData, dimensions } = orphanedResult;
+
+          // If we already have this page in our cache, ignore the recovery
+          if (this.pageCache.has(`page-${pageNumber}`)) {
+            logger.log(
+              `[RecoverySystem] Page ${pageNumber} already in cache, ignoring recovery`
+            );
+            return;
+          }
+
+          // Create a blob URL from the orphaned result
+          try {
+            const blob = new Blob([blobData], { type: "image/webp" });
+            const url = URL.createObjectURL(blob);
+
+            this.pageCache.set(`page-${pageNumber}`, {
+              url,
+              lastAccessed: Date.now(),
+              dimensions,
+              pageNumber,
+            });
+
+            // Find and resolve any queued items for this page
+            const queueItems = this.processingQueue.filter(
+              (item) => item.pageNumber === pageNumber
+            );
+
+            if (queueItems.length > 0) {
+              logger.log(
+                `[RecoverySystem] Resolving ${queueItems.length} queued items for recovered page ${pageNumber}`
+              );
+
+              queueItems.forEach((item) => {
+                item.resolve({ url, dimensions, pageNumber });
+              });
+
+              // Remove resolved items from the queue
+              this.processingQueue = this.processingQueue.filter(
+                (item) => item.pageNumber !== pageNumber
+              );
+
+              // Update processing tracking
+              this.processingPages.delete(pageNumber);
+              this.activeProcessing = Math.max(0, this.activeProcessing - 1);
+            }
+          } catch (error) {
+            logger.error(
+              `[RecoverySystem] Error recovering page ${pageNumber}:`,
+              error
+            );
+          }
+        }
+      }
+    );
+
+    // Handle recovered PDF initialized events
+    this.pdfInitRecoveryUnsubscribe = recoveryEmitter.on(
+      RecoveryEventType.PDFInitialized,
+      (data) => {
+        // Type assertion to ensure we have the right data type
+        const initData = data as PDFInitializedRecoveryData;
+        if (!initData.clientId) return;
+
+        logger.log(
+          `[RecoverySystem] Received orphaned PDFInitialized event for client ${initData.clientId} with ${initData.totalPages} pages`
+        );
+
+        // Additional recovery logic could be implemented here
+      }
+    );
+  }
 }
 
 export class PDFBatchProcessor {
   private maxConcurrentFiles: number;
-  private maxFilesInBatch: number;
-  private singleFileMaxSize: number;
-  private batchFileMaxSize: number;
-  private totalBatchMaxSize: number;
   private processorOptions: Partial<ProcessingOptions>;
 
   constructor({
-    maxConcurrentFiles = 3,
-    maxFilesInBatch = SIZE_LIMITS.MAX_FILES_IN_BATCH,
-    singleFileMaxSize = SIZE_LIMITS.SINGLE_PDF_MAX_SIZE,
-    batchFileMaxSize = SIZE_LIMITS.BATCH_PDF_MAX_SIZE,
-    totalBatchMaxSize = SIZE_LIMITS.TOTAL_BATCH_MAX_SIZE,
+    maxConcurrentFiles = DEFAULT_MAX_CONCURRENT_FILES,
     processorOptions = {},
   } = {}) {
     this.maxConcurrentFiles = maxConcurrentFiles;
-    this.maxFilesInBatch = maxFilesInBatch;
-    this.singleFileMaxSize = singleFileMaxSize;
-    this.batchFileMaxSize = batchFileMaxSize;
-    this.totalBatchMaxSize = totalBatchMaxSize;
     this.processorOptions = processorOptions;
   }
 
@@ -575,7 +663,7 @@ export class PDFBatchProcessor {
           callbacks.onFileStatus(file.name, status);
         });
 
-        console.log(
+        logger.log(
           `Starting to process all pages for ${file.name} (${totalPages} pages)`
         );
         const pageResults = await this.processAllPagesWithRetry(
@@ -589,7 +677,7 @@ export class PDFBatchProcessor {
           abortSignal,
           failedPages
         );
-        console.log(
+        logger.log(
           `Finished processing all pages for ${file.name}, result count: ${pageResults.length}`
         );
 
@@ -690,7 +778,7 @@ export class PDFBatchProcessor {
         failedPages.set(fileName, []);
       }
 
-      console.log(`Starting processing for ${fileName} page ${pageNumber}`);
+      logger.log(`Starting processing for ${fileName} page ${pageNumber}`);
 
       for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
         if (abortSignal.aborted) {
@@ -699,7 +787,7 @@ export class PDFBatchProcessor {
 
         try {
           while (!isOnline()) {
-            console.warn(
+            logger.warn(
               `User offline. Pausing retries for ${fileName} page ${pageNumber}`
             );
             if (attempt > 1) {
@@ -721,12 +809,12 @@ export class PDFBatchProcessor {
             ProcessingStatus.PROCESSING
           );
 
-          console.log(`Calling getPage for ${fileName} page ${pageNumber}`);
+          logger.log(`Calling getPage for ${fileName} page ${pageNumber}`);
           const data = await processor.getPage(
             pageNumber,
             callbacks.displayInfo
           );
-          console.log(
+          logger.log(
             `Finished getPage for ${fileName} page ${pageNumber}, got URL: ${data.url.substring(
               0,
               30
@@ -752,12 +840,12 @@ export class PDFBatchProcessor {
             pageRetries.splice(pageRetryIndex, 1);
           }
 
-          console.log(`Successfully processed ${fileName} page ${pageNumber}`);
+          logger.log(`Successfully processed ${fileName} page ${pageNumber}`);
           return false;
         } catch (error) {
           const isProduction = process.env.NODE_ENV === "production";
 
-          console.warn(
+          logger.warn(
             `Page ${pageNumber} of ${fileName} failed (Attempt: ${attempt})`
           );
 
@@ -774,7 +862,7 @@ export class PDFBatchProcessor {
 
           if (attempt === MAX_PAGE_RETRIES) {
             if (isProduction) {
-              console.error(error);
+              logger.error(error);
             }
             callbacks.onPageProcessed(
               fileName,

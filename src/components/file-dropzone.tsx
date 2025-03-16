@@ -30,7 +30,6 @@ import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
 import {
   FILE_INPUT_TYPES,
   FILE_PROCESSING_EVENTS,
-  MAX_CONCURRENT_FILES,
 } from "@/constants/processing";
 import { useShallow } from "zustand/shallow";
 import {
@@ -40,6 +39,7 @@ import {
 } from "@/utils/file-validation";
 import { PDFBatchProcessor } from "@/classes/pdf-processor";
 import { ImageBatchProcessor } from "@/classes/image-processor";
+import { DEFAULT_MAX_CONCURRENT_FILES } from "@/config/app";
 
 const ALLOWED_IMAGE_TYPES = [
   FILE_INPUT_TYPES.PNG,
@@ -166,9 +166,7 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
   /** Handles PDF processing with concurrency */
   const processPdfs = useCallback(
     async function (files: File[], abortSignal: AbortSignal) {
-      const batchProcessor = new PDFBatchProcessor({
-        maxConcurrentFiles: MAX_CONCURRENT_FILES,
-      });
+      const batchProcessor = new PDFBatchProcessor({});
 
       setTimeout(() => {
         toast.loading("Processing PDFs...", { id: "file-processing" });

@@ -17,6 +17,15 @@ export function isWindowDefined(): boolean {
 }
 
 /**
+ * Checks if the environment is a browser with Web Worker support.
+ * Use this for worker-related code that requires both window and Worker.
+ * @returns {boolean} `true` if running in the browser with Worker support, otherwise `false`.
+ */
+export function isBrowserWithWorker(): boolean {
+  return typeof window !== "undefined" && typeof Worker !== "undefined";
+}
+
+/**
  * Creates a debounced version of a function that delays its execution
  * until after a specified wait time has passed since the last invocation.
  *
