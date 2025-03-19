@@ -83,6 +83,149 @@ export function validateFile(
 }
 
 /**
+ * Checks if a PDF file has proper header structure to detect corruption
+ * Only reads the first few bytes for quick validation
+ */
+export async function validatePDFContent(
+  file: File
+): Promise<{ isValid: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    // Only check files that claim to be PDFs
+    if (!isPdfFile(file.type)) {
+      resolve({ isValid: true });
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const content = new Uint8Array(e.target?.result as ArrayBuffer);
+
+        // Check for PDF header signature (%PDF-)
+        // This is the minimal check for a valid PDF file
+        if (
+          content.length < 5 ||
+          content[0] !== 0x25 || // %
+          content[1] !== 0x50 || // P
+          content[2] !== 0x44 || // D
+          content[3] !== 0x46 || // F
+          content[4] !== 0x2d
+        ) {
+          // -
+          resolve({
+            isValid: false,
+            error:
+              "The PDF file appears to be corrupted (invalid header signature)",
+          });
+        } else {
+          resolve({ isValid: true });
+        }
+      } catch (err) {
+        resolve({
+          isValid: false,
+          error: `Failed to read file content for validation: ${
+            err instanceof Error ? err.message : "Unknown error"
+          }`,
+        });
+      }
+    };
+
+    reader.onerror = () => {
+      resolve({
+        isValid: false,
+        error: "Failed to read file for corruption check",
+      });
+    };
+
+    // Only read the first 1KB to check header
+    reader.readAsArrayBuffer(file.slice(0, 1024));
+  });
+}
+
+/**
+ * Validates a file for size, name length, and file type
+ * For PDFs, also checks for content validity
+ */
+export async function validateFileWithContent(
+  file: File,
+  allowedTypes: string[]
+): Promise<{ isValid: boolean; error?: string }> {
+  // Basic validation first (filename, type, etc)
+  const basicValidation = validateFile(file, allowedTypes);
+
+  if (!basicValidation.isValid) {
+    return basicValidation;
+  }
+
+  // For PDFs, perform content validation
+  if (isPdfFile(file.type)) {
+    return await validatePDFContent(file);
+  }
+
+  return { isValid: true };
+}
+
+/**
+ * Optimized batch validation for multiple files with content validation
+ * Enhanced version that can perform content checks for corruption detection
+ */
+export async function validateFileBatchWithContent(
+  files: File[],
+  allowedTypes: string[],
+  options?: {
+    maxFilesInBatch?: number;
+    totalBatchMaxSize?: number;
+    singleFileMaxSize?: number;
+    pdfMaxFilesInBatch?: number;
+    pdfSingleFileMaxSize?: number;
+    pdfBatchFileMaxSize?: number;
+    imageMaxFilesInBatch?: number;
+    imageSingleFileMaxSize?: number;
+    fileTypeValidation?: boolean;
+    checkForCorruption?: boolean;
+  }
+): Promise<{
+  isValid: boolean;
+  error?: string;
+  sanitizedFiles?: File[];
+  hasDuplicates?: boolean;
+  hasProcessedFiles?: boolean;
+  processedFileNames?: string[];
+  fileCategory?: "image" | "pdf" | "mixed";
+}> {
+  // First perform the standard batch validation
+  const basicValidation = validateFileBatch(files, allowedTypes, options);
+
+  // If basic validation fails, return immediately
+  if (!basicValidation.isValid) {
+    return basicValidation;
+  }
+
+  // If content validation is enabled and we have PDFs, check each PDF file
+  if (
+    options?.checkForCorruption !== false &&
+    basicValidation.sanitizedFiles &&
+    basicValidation.fileCategory === "pdf"
+  ) {
+    // Check each PDF for corruption
+    for (const file of basicValidation.sanitizedFiles) {
+      const contentValidation = await validatePDFContent(file);
+      if (!contentValidation.isValid) {
+        return {
+          isValid: false,
+          error: `File "${file.name}": ${contentValidation.error}`,
+          fileCategory: "pdf",
+        };
+      }
+    }
+  }
+
+  // All validations passed
+  return basicValidation;
+}
+
+/**
  * Optimized batch validation for multiple files
  * Validates all files in a single pass and checks for mixed file categories
  */

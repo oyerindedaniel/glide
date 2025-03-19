@@ -318,6 +318,7 @@ const processMessage = async (
           requestId,
           success: true,
         };
+        console.log("Cleanup message sent", cleanupMessage);
         targetPort.postMessage(cleanupMessage);
         break;
       }

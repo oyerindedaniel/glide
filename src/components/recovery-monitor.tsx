@@ -3,7 +3,7 @@ import {
   useRecoveryStats,
   usePageRecovery,
   usePDFInitRecovery,
-} from "@/hooks/useRecoveryEvents";
+} from "@/hooks/use-recovery-events";
 import { toast } from "sonner";
 import logger from "@/utils/logger";
 

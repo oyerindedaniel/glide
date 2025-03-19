@@ -6,9 +6,8 @@ import {
   PageProcessedMessage,
   ErrorMessage,
   AbortProcessingMessage,
-  RecoveryQueueEntry,
-  RecoveryDataForType,
   RecoveryEventType,
+  RecoveryDataForType,
   CoordinatorFallbackMessage,
   isCoordinatorFallbackMessage,
 } from "@/types/processor";
@@ -24,16 +23,11 @@ import { v4 as uuidv4 } from "uuid";
 import {
   MAX_WORKERS,
   COORDINATOR_COUNT,
-  WORKER_TERMINATION_DELAY,
-  LIBRARY_WORKER_TERMINATION_DELAY,
-  MAX_RECOVERY_ATTEMPTS,
   ORPHANED_RESULT_EXPIRATION,
 } from "@/config/app";
 import logger from "@/utils/logger";
 import { isBrowserWithWorker } from "@/utils/app";
-import { DEFAULT_PAGE_PROCESSING_CONFIG } from "@/constants/processing";
 import recoveryEmitter from "@/utils/recovery-event-emitter";
-// import { pdfJsWorker } from "./pdf-library.worker";
 
 // Reference to the shared PDF.js library worker
 let sharedLibraryWorker: Worker | null = null;
@@ -73,10 +67,8 @@ export class PDFWorkerPool {
   private maxWorkers: number;
   private coordinatorCount: number;
   private static instance: PDFWorkerPool;
-  private isInitialized = false;
-  // Track active clients to better manage resources
+  public isInitialized = false;
   private activeClients = new Set<string>();
-  // Map to track message handlers by worker for proper cleanup
   private workerHandlers = new Map<
     Worker,
     (e: MessageEvent<WorkerMessage>) => void
@@ -84,9 +76,8 @@ export class PDFWorkerPool {
 
   // Recovery system properties
   private orphanedResults = new Map<string, WorkerMessage>();
-  private recoveryQueue = new Map<string, RecoveryQueueEntry>();
-  private maxRecoveryAttempts = MAX_RECOVERY_ATTEMPTS;
-  private defaultPageConfig = DEFAULT_PAGE_PROCESSING_CONFIG;
+
+  private terminationTimeouts: NodeJS.Timeout[] = [];
 
   private constructor(
     maxWorkers = MAX_WORKERS,
@@ -101,14 +92,20 @@ export class PDFWorkerPool {
         new URL("./pdf-library.worker.ts", import.meta.url)
       );
     }
+  }
 
-    if (isBrowserWithWorker()) {
-      this.initializeCoordinators();
-    }
+  /**
+   * Initialize the worker pool instance
+   */
+  private async initialize(): Promise<void> {
+    if (this.isInitialized || !isBrowserWithWorker()) return;
+
+    await this.initializeCoordinators();
   }
 
   private async initializeCoordinators() {
-    if (!sharedLibraryWorker || !isBrowserWithWorker()) return;
+    if (!sharedLibraryWorker || !isBrowserWithWorker() || this.isInitialized)
+      return;
 
     logger.log(`Initializing ${this.coordinatorCount} coordinator workers...`);
 
@@ -239,16 +236,11 @@ export class PDFWorkerPool {
       return;
     }
 
-    // Create a unique recovery key
+    // Unique recovery key
     const recoveryKey = `${data.clientId}-PageProcessed-${data.pageNumber}`;
 
     // Store the result for later retrieval
     this.storeOrphanedResult(data, recoveryKey);
-
-    // Add to recovery queue for automatic retry if client is still active
-    if (this.activeClients.has(data.clientId)) {
-      this.addToRecoveryQueue(recoveryKey, data);
-    }
 
     // Notify main thread about the orphaned result
     this.notifyMainThread<WorkerMessageType.PageProcessed>(
@@ -264,7 +256,7 @@ export class PDFWorkerPool {
     );
 
     logger.warn(
-      `[WorkerPool] Undeliverable PageProcessed for page ${data.pageNumber}, client ${data.clientId}. Recovery queued.`
+      `[WorkerPool] Undeliverable PageProcessed for page ${data.pageNumber}, client ${data.clientId}. Recovery event emitted.`
     );
   }
 
@@ -281,18 +273,15 @@ export class PDFWorkerPool {
       return;
     }
 
-    // Create a unique recovery key
-    const recoveryKey = `${data.clientId}-PDFInitialized`;
+    // Unique recovery key
+    const recoveryKey = `${data.clientId}-PDFInitialized-${
+      data.totalPages || 0
+    }`;
 
     // Store the result for later retrieval
     this.storeOrphanedResult(data, recoveryKey);
 
-    // Track client if not already tracked
-    if (!this.activeClients.has(data.clientId)) {
-      this.trackClient(data.clientId);
-    }
-
-    // Notify main thread
+    // Notify main thread about the orphaned result
     this.notifyMainThread<WorkerMessageType.PDFInitialized>(
       RecoveryEventType.PDFInitialized,
       {
@@ -305,7 +294,7 @@ export class PDFWorkerPool {
     );
 
     logger.warn(
-      `[WorkerPool] Undeliverable PDFInitialized for client ${data.clientId} with ${data.totalPages} pages. Saved for recovery.`
+      `[WorkerPool] Undeliverable PDFInitialized for client ${data.clientId}. Recovery event emitted.`
     );
   }
 
@@ -315,29 +304,29 @@ export class PDFWorkerPool {
   private handleOrphanedError(
     data: CoordinatorFallbackMessage<ErrorMessage>
   ): void {
-    // Log the error to console
-    logger.error(
-      `[WorkerPool] Error from coordinator ${data.coordinatorId || "unknown"}:`,
-      data.error
-    );
-
-    // Store for potential recovery and troubleshooting
-    if (data.clientId) {
-      const recoveryKey = `${data.clientId}-Error-${
-        data.pageNumber || "unknown"
-      }-${Date.now()}`;
-      this.storeOrphanedResult(data, recoveryKey);
-
-      // Notify main thread
-      this.notifyMainThread<WorkerMessageType.Error>(RecoveryEventType.Error, {
-        type: WorkerMessageType.Error,
-        clientId: data.clientId,
-        pageNumber: data.pageNumber,
-        error: data.error,
-        recoveryKey,
-        timestamp: Date.now(),
-      });
+    if (!data.clientId) {
+      logger.warn(`[WorkerPool] Cannot recover Error message without clientId`);
+      return;
     }
+
+    // Unique recovery key
+    const recoveryKey = `${data.clientId}-Error-${Date.now()}`;
+
+    // Store the result for later retrieval
+    this.storeOrphanedResult(data, recoveryKey);
+
+    // Notify main thread about the orphaned error
+    this.notifyMainThread<WorkerMessageType.Error>(RecoveryEventType.Error, {
+      type: WorkerMessageType.Error,
+      clientId: data.clientId,
+      error: data.error,
+      recoveryKey,
+      timestamp: Date.now(),
+    });
+
+    logger.warn(
+      `[WorkerPool] Undeliverable Error for client ${data.clientId}: ${data.error}. Recovery event emitted.`
+    );
   }
 
   /**
@@ -346,27 +335,37 @@ export class PDFWorkerPool {
   private handleOrphanedCleanup(
     data: CoordinatorFallbackMessage<CleanupMessage>
   ): void {
-    // If a cleanup message is orphaned, we should still clean up resources for this client
-    if (data.clientId) {
-      logger.log(
-        `[WorkerPool] Processing orphaned cleanup for client ${data.clientId}`
+    if (!data.clientId) {
+      logger.warn(
+        `[WorkerPool] Cannot recover Cleanup message without clientId`
       );
-      this.activeClients.delete(data.clientId);
-
-      // Clear any pending recovery attempts for this client
-      this.clearClientRecoveryEntries(data.clientId);
-
-      // Notify main thread
-      this.notifyMainThread<WorkerMessageType.Cleanup>(
-        RecoveryEventType.Cleanup,
-        {
-          type: WorkerMessageType.Cleanup,
-          clientId: data.clientId,
-          recoveryKey: `${data.clientId}-Cleanup`,
-          timestamp: Date.now(),
-        }
-      );
+      return;
     }
+
+    // Process cleanup for this client
+    this.clearClientRecoveryEntries(data.clientId);
+    this.activeClients.delete(data.clientId);
+
+    // Unique recovery key for tracking
+    const recoveryKey = `${data.clientId}-Cleanup-${Date.now()}`;
+
+    // Store the result for potential introspection
+    this.storeOrphanedResult(data, recoveryKey);
+
+    // Notify main thread about the cleanup
+    this.notifyMainThread<WorkerMessageType.Cleanup>(
+      RecoveryEventType.Cleanup,
+      {
+        type: WorkerMessageType.Cleanup,
+        clientId: data.clientId,
+        recoveryKey,
+        timestamp: Date.now(),
+      }
+    );
+
+    logger.warn(
+      `[WorkerPool] Undeliverable Cleanup for client ${data.clientId}. Client resources cleaned up.`
+    );
   }
 
   /**
@@ -375,27 +374,37 @@ export class PDFWorkerPool {
   private handleOrphanedAbortProcessing(
     data: CoordinatorFallbackMessage<AbortProcessingMessage>
   ): void {
-    // Similar to cleanup, but for aborted processing
-    if (data.clientId) {
-      logger.log(
-        `[WorkerPool] Processing orphaned abort for client ${data.clientId}`
+    if (!data.clientId) {
+      logger.warn(
+        `[WorkerPool] Cannot recover AbortProcessing message without clientId`
       );
-      this.activeClients.delete(data.clientId);
-
-      // Clear any pending recovery attempts for this client
-      this.clearClientRecoveryEntries(data.clientId);
-
-      // Notify main thread
-      this.notifyMainThread<WorkerMessageType.AbortProcessing>(
-        RecoveryEventType.AbortProcessing,
-        {
-          type: WorkerMessageType.AbortProcessing,
-          clientId: data.clientId,
-          recoveryKey: `${data.clientId}-Abort`,
-          timestamp: Date.now(),
-        }
-      );
+      return;
     }
+
+    // Process cleanup for this client
+    this.clearClientRecoveryEntries(data.clientId);
+    this.activeClients.delete(data.clientId);
+
+    // Unique recovery key for tracking
+    const recoveryKey = `${data.clientId}-Abort-${Date.now()}`;
+
+    // Store the result for potential introspection
+    this.storeOrphanedResult(data, recoveryKey);
+
+    // Notify main thread about the abort
+    this.notifyMainThread<WorkerMessageType.AbortProcessing>(
+      RecoveryEventType.AbortProcessing,
+      {
+        type: WorkerMessageType.AbortProcessing,
+        clientId: data.clientId,
+        recoveryKey,
+        timestamp: Date.now(),
+      }
+    );
+
+    logger.warn(
+      `[WorkerPool] Undeliverable AbortProcessing for client ${data.clientId}. Client resources cleaned up.`
+    );
   }
 
   /**
@@ -413,126 +422,22 @@ export class PDFWorkerPool {
   }
 
   /**
-   * Add a message to the recovery queue for automatic retry
-   */
-  private addToRecoveryQueue(
-    recoveryKey: string,
-    message: WorkerMessage
-  ): void {
-    // Only add if not already in queue
-    if (!this.recoveryQueue.has(recoveryKey)) {
-      this.recoveryQueue.set(recoveryKey, {
-        message,
-        attempts: 0,
-        lastAttempt: Date.now(),
-      });
-
-      // Schedule first recovery attempt
-      this.scheduleRecoveryAttempt(recoveryKey);
-    }
-  }
-
-  /**
-   * Schedule a recovery attempt with exponential backoff
-   */
-  private scheduleRecoveryAttempt(recoveryKey: string): void {
-    const entry = this.recoveryQueue.get(recoveryKey);
-    if (!entry || entry.attempts >= this.maxRecoveryAttempts) {
-      // Remove from queue if max attempts reached
-      if (entry) {
-        logger.warn(
-          `[WorkerPool] Max recovery attempts (${this.maxRecoveryAttempts}) reached for ${recoveryKey}, removing from queue`
-        );
-        this.recoveryQueue.delete(recoveryKey);
-      }
-      return;
-    }
-
-    // Exponential backoff - wait longer between attempts
-    const backoff = Math.min(Math.pow(2, entry.attempts) * 1000, 30000); // 1s, 2s, 4s, etc. max 30s
-
-    setTimeout(() => {
-      this.attemptRecovery(recoveryKey);
-    }, backoff);
-  }
-
-  /**
-   * Attempt to recover a message by re-dispatching operation
-   */
-  private attemptRecovery(recoveryKey: string): void {
-    const entry = this.recoveryQueue.get(recoveryKey);
-    if (!entry) return;
-
-    // Update attempt counter
-    entry.attempts++;
-    entry.lastAttempt = Date.now();
-    this.recoveryQueue.set(recoveryKey, entry);
-
-    const { message } = entry;
-
-    logger.log(
-      `[WorkerPool] Recovery attempt ${entry.attempts}/${this.maxRecoveryAttempts} for ${recoveryKey}`
-    );
-
-    // Process based on message type
-    switch (message.type) {
-      case WorkerMessageType.PageProcessed:
-        // For page processed, we need to re-request the page
-        const pageMessage = message as PageProcessedMessage;
-
-        if (pageMessage.clientId && pageMessage.pageNumber) {
-          this.getWorker()
-            .then((worker) => {
-              worker.postMessage({
-                type: WorkerMessageType.ProcessPage,
-                clientId: pageMessage.clientId,
-                pageNumber: pageMessage.pageNumber,
-                config: this.defaultPageConfig,
-                isRecoveryAttempt: true,
-              });
-            })
-            .catch((err) => {
-              logger.error(`[WorkerPool] Recovery attempt failed:`, err);
-              // Schedule next attempt
-              this.scheduleRecoveryAttempt(recoveryKey);
-            });
-        }
-        break;
-
-      // For other message types, we may not need or be able to retry automatically
-      default:
-        logger.log(
-          `[WorkerPool] No automatic recovery action for message type ${message.type}`
-        );
-        // Still remove from queue since we can't retry
-        this.recoveryQueue.delete(recoveryKey);
-        break;
-    }
-  }
-
-  /**
-   * Clear all recovery entries for a specific client
+   * Clear any recovery entries for a client
    */
   private clearClientRecoveryEntries(clientId: string): void {
-    if (!clientId) return;
+    logger.log(
+      `[WorkerPool] Cleaning up recovery entries for client ${clientId}`
+    );
 
-    // Find and remove all recovery queue entries for this client
-    for (const [key, entry] of this.recoveryQueue.entries()) {
-      if (entry.message.clientId === clientId) {
-        this.recoveryQueue.delete(key);
-      }
-    }
-
-    // Also clean up orphaned results
+    // Remove any orphaned results for this client
     for (const [key, result] of this.orphanedResults.entries()) {
       if (result.clientId === clientId) {
         this.orphanedResults.delete(key);
+        logger.log(
+          `[WorkerPool] Removed orphaned result ${key} for client ${clientId}`
+        );
       }
     }
-
-    logger.log(
-      `[WorkerPool] Cleared all recovery entries for client ${clientId}`
-    );
   }
 
   /**
@@ -544,7 +449,7 @@ export class PDFWorkerPool {
     eventName: RecoveryEventType | string,
     data: RecoveryDataForType<T>
   ): void {
-    // Use the recovery event emitter instead of self.postMessage
+    // Use the recovery event emitter
     recoveryEmitter.emit(eventName as RecoveryEventType, data);
 
     // For backward compatibility during transition, we'll also log the event
@@ -584,50 +489,76 @@ export class PDFWorkerPool {
   }
 
   /**
-   * Get recovery statistics
-   * @returns Statistics about recovery system state
+   * Get recovery statistics for monitoring
    */
   public getRecoveryStats(): {
     orphanedResultsCount: number;
-    pendingRecoveryCount: number;
     recoveryByType: Record<string, number>;
   } {
-    // Count orphaned results by type
-    const recoveryByType: Record<string, number> = {};
-
+    // Count recovery attempts by message type
+    const typeCount: Record<string, number> = {};
     for (const result of this.orphanedResults.values()) {
       const type = result.type;
-      recoveryByType[type] = (recoveryByType[type] || 0) + 1;
+      typeCount[type] = (typeCount[type] || 0) + 1;
     }
 
     return {
       orphanedResultsCount: this.orphanedResults.size,
-      pendingRecoveryCount: this.recoveryQueue.size,
-      recoveryByType,
+      recoveryByType: typeCount,
     };
   }
 
-  public static getInstance(
+  /**
+   * Get or create the PDFWorkerPool singleton instance,
+   * ensuring it's properly initialized before returning
+   */
+  public static async getInstance(
+    maxWorkers = MAX_WORKERS,
+    coordinatorCount = COORDINATOR_COUNT
+  ): Promise<PDFWorkerPool> {
+    if (PDFWorkerPool.instance) {
+      if (!PDFWorkerPool.instance.isInitialized) {
+        await PDFWorkerPool.instance.initialize();
+      }
+      return PDFWorkerPool.instance;
+    }
+
+    const instance = new PDFWorkerPool(maxWorkers, coordinatorCount);
+    PDFWorkerPool.instance = instance;
+    await instance.initialize();
+    return instance;
+  }
+
+  /**
+   * Get the PDFWorkerPool singleton instance synchronously without waiting for initialization
+   * WARNING: This should only be used when the caller can handle an uninitialized instance
+   * or when it's known that the instance is already initialized
+   */
+  public static getInstanceSync(
     maxWorkers = MAX_WORKERS,
     coordinatorCount = COORDINATOR_COUNT
   ): PDFWorkerPool {
     if (!PDFWorkerPool.instance) {
       PDFWorkerPool.instance = new PDFWorkerPool(maxWorkers, coordinatorCount);
+
+      if (isBrowserWithWorker()) {
+        void PDFWorkerPool.instance.initialize();
+      }
     }
+
     return PDFWorkerPool.instance;
   }
 
   public async getWorker(): Promise<Worker> {
-    // Ensure we're in a browser environment
     if (!isBrowserWithWorker()) {
       return Promise.reject(
         new Error("Workers are only available in browser environments")
       );
     }
 
-    // Wait for coordinators to initialize if they haven't
+    // Make sure initialization is complete before proceeding
     if (!this.isInitialized) {
-      await this.initializeCoordinators();
+      await this.initialize();
     }
 
     if (this.availableWorkers.length > 0) {
@@ -743,7 +674,6 @@ export class PDFWorkerPool {
 
       // Note: We don't remove event listeners when releasing workers to the pool
       // We only remove them when terminating workers
-      // This way we maintain the ability to track clients across worker reuse
 
       this.availableWorkers.push(worker);
     }
@@ -843,7 +773,6 @@ export class PDFWorkerPool {
       // Send the request with the port
       coordinator.postMessage(statusRequest, [channel.port2]);
 
-      // Set a timeout to avoid hanging
       setTimeout(() => {
         channel.port1.close();
         logger.warn(`Status request to coordinator ${targetIndex} timed out`);
@@ -860,6 +789,13 @@ export class PDFWorkerPool {
   public async cleanupClient(clientId: string): Promise<boolean> {
     if (!isBrowserWithWorker() || !clientId) {
       return false;
+    }
+
+    if (!this.activeClients.has(clientId)) {
+      logger.log(
+        `Client ${clientId} not found in active clients, skipping cleanup`
+      );
+      return true;
     }
 
     logger.log(`Cleaning up resources for client: ${clientId}`);
@@ -881,7 +817,21 @@ export class PDFWorkerPool {
       }
     }
 
-    // We don't wait for responses as they'll come back through the fallback mechanism if needed
+    // Clean up any orphaned results for this client
+    const keysToDelete: string[] = [];
+    for (const [key, value] of this.orphanedResults.entries()) {
+      if (value.clientId === clientId) {
+        keysToDelete.push(key);
+      }
+    }
+
+    keysToDelete.forEach((key) => this.orphanedResults.delete(key));
+    if (keysToDelete.length > 0) {
+      logger.log(
+        `Cleaned up ${keysToDelete.length} orphaned results for client ${clientId}`
+      );
+    }
+
     return true;
   }
 
@@ -936,8 +886,24 @@ export class PDFWorkerPool {
     };
   }
 
+  /**
+   * Clear all termination timeouts
+   */
+  private clearTerminationTimeouts(): void {
+    this.terminationTimeouts.forEach((id) => {
+      clearTimeout(id);
+    });
+    this.terminationTimeouts = [];
+  }
+
   public terminateAll() {
     if (!isBrowserWithWorker()) return;
+
+    // Clear any existing termination timeouts first
+    this.clearTerminationTimeouts();
+
+    // Set a flag to prevent new initializations during cleanup
+    this.isInitialized = false;
 
     // Clear active clients tracking
     logger.log(`Cleaning up ${this.activeClients.size} active clients`);
@@ -958,9 +924,17 @@ export class PDFWorkerPool {
           this.handleCoordinatorFallbackMessage
         );
 
-        setTimeout(() => {
-          coordinator.terminate();
-        }, WORKER_TERMINATION_DELAY);
+        // Add a small delay before termination to allow postMessage to complete
+        const timeoutId = setTimeout(() => {
+          try {
+            coordinator.terminate();
+          } catch (err) {
+            logger.warn("Error terminating coordinator worker", err);
+          }
+        }, 200);
+
+        // Track the timeout for cleanup
+        this.terminationTimeouts.push(timeoutId);
       } catch (error) {
         logger.warn("Error cleaning up coordinator worker", error);
       }
@@ -977,15 +951,22 @@ export class PDFWorkerPool {
           this.workerHandlers.delete(worker);
         }
 
-        // Send a properly typed worker cleanup message
         const cleanupMessage: CleanupMessage = {
           type: WorkerMessageType.Cleanup,
         };
         worker.postMessage(cleanupMessage);
 
-        setTimeout(() => {
-          worker.terminate();
-        }, WORKER_TERMINATION_DELAY);
+        // Terminate with delay to ensure cleanup message is processed
+        const timeoutId = setTimeout(() => {
+          try {
+            worker.terminate();
+          } catch (err) {
+            logger.warn("Error terminating worker", err);
+          }
+        }, 200);
+
+        // Track the timeout for cleanup
+        this.terminationTimeouts.push(timeoutId);
       } catch (error) {
         logger.warn("Error cleaning up worker", error);
       }
@@ -1038,18 +1019,40 @@ export class PDFWorkerPool {
     this.coordinatorChannels = [];
     this.workerCoordinatorChannels = [];
     this.taskQueue = [];
-    this.isInitialized = false;
+
+    // Clear orphaned results
+    this.orphanedResults.clear();
 
     // Finally, terminate the shared library worker
     if (sharedLibraryWorker) {
       try {
-        setTimeout(() => {
-          sharedLibraryWorker?.terminate();
-          sharedLibraryWorker = null;
-        }, LIBRARY_WORKER_TERMINATION_DELAY);
+        const timeoutId = setTimeout(() => {
+          try {
+            sharedLibraryWorker!.terminate();
+            sharedLibraryWorker = null;
+            logger.log("Shared library worker terminated successfully");
+          } catch (error) {
+            logger.warn("Error terminating shared library worker", error);
+          }
+        }, 200);
+
+        // Track the timeout for cleanup
+        this.terminationTimeouts.push(timeoutId);
       } catch (error) {
-        logger.warn("Error terminating shared library worker", error);
+        logger.warn(
+          "Error setting up shared library worker termination",
+          error
+        );
       }
+    }
+  }
+
+  // Add a public method to ensure cleanup and reset the singleton instance
+  public static resetInstance(): void {
+    if (PDFWorkerPool.instance) {
+      PDFWorkerPool.instance.terminateAll();
+      // @ts-expect-error - We're intentionally resetting the singleton instance
+      PDFWorkerPool.instance = null;
     }
   }
 }

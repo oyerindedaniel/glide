@@ -9,22 +9,39 @@ import {
   ProcessPageMessage,
   ErrorMessage,
 } from "@/types/processor";
-import { v4 as uuidv4 } from "uuid";
 import { CoordinatorMessageType } from "@/types/coordinator";
+import { v4 as uuidv4 } from "uuid";
 import logger from "@/utils/logger";
-import { isBrowserWithWorker } from "@/utils/app";
+import { generateRandomId, isBrowserWithWorker } from "@/utils/app";
 
-// Create a unique client ID
-const CLIENT_ID = uuidv4();
+// Create a unique client ID for fallback purposes only
+// This should only be used if no clientId is provided in the message
+const WORKER_FALLBACK_ID = uuidv4();
 
 // Default worker ID (will be overridden by pool's ID if provided)
-const DEFAULT_WORKER_ID =
-  "worker_" + Math.random().toString(36).substring(2, 8);
+const DEFAULT_WORKER_ID = "worker_" + generateRandomId();
 let workerId = DEFAULT_WORKER_ID;
 
 // Coordinator tracker variable
 let assignedCoordinatorIndex = -1;
 let coordinatorPort: MessagePort | null = null;
+
+// Worker heartbeat to indicate processing activity
+let heartbeatInterval: any = null;
+
+function startHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+  }
+
+  heartbeatInterval = setInterval(() => {
+    self.postMessage({
+      type: WorkerMessageType.WorkerHeartbeat,
+      timestamp: Date.now(),
+      workerId,
+    });
+  }, 3000);
+}
 
 // Listen for coordinator assignment
 self.addEventListener(
@@ -33,7 +50,6 @@ self.addEventListener(
     if (e.data.type === CoordinatorMessageType.ASSIGN_COORDINATOR) {
       assignedCoordinatorIndex = e.data.coordinatorIndex;
 
-      // Use the workerId passed from the pool if available
       if (e.data.workerId) {
         workerId = e.data.workerId;
       }
@@ -79,14 +95,8 @@ function handleCoordinatorMessage(e: MessageEvent) {
     }`
   );
 
-  // Make sure the clientId is passed through
-  const messageToMain = {
-    ...e.data,
-    clientId: clientId || CLIENT_ID,
-  };
-
   // Forward the message to the main thread
-  self.postMessage(messageToMain);
+  self.postMessage(e.data);
 }
 
 // Function to send messages to the coordinator
@@ -99,6 +109,12 @@ function sendToCoordinator(message: any, transfer: Transferable[] = []) {
   }
 
   try {
+    // Ensure we're not overriding an existing client ID
+    if (!message.clientId) {
+      // Only use fallback ID if no client ID was provided
+      message.clientId = WORKER_FALLBACK_ID;
+    }
+
     coordinatorPort.postMessage(message, transfer);
     return true;
   } catch (error) {
@@ -109,6 +125,8 @@ function sendToCoordinator(message: any, transfer: Transferable[] = []) {
 
 // Main worker message handler
 if (isBrowserWithWorker() && typeof self !== "undefined") {
+  startHeartbeat();
+
   self.onmessage = async (e: MessageEvent) => {
     const data = e.data;
     const { type } = data;
@@ -118,37 +136,48 @@ if (isBrowserWithWorker() && typeof self !== "undefined") {
     );
 
     try {
+      if (type === CoordinatorMessageType.ASSIGN_COORDINATOR) {
+        logger.log(
+          `[${workerId}] Skipping ASSIGN_COORDINATOR in main handler as it's handled by coordinatorSetup`
+        );
+        return;
+      }
+
       switch (type) {
         case WorkerMessageType.InitPDF: {
-          // Message type: InitPDFMessage - Contains PDF data to be initialized
           const initMessage = data as InitPDFMessage;
-          await initPDF(initMessage.pdfData);
+          await initPDF(
+            initMessage.pdfData,
+            initMessage.clientId || WORKER_FALLBACK_ID
+          );
           break;
         }
 
         case WorkerMessageType.ProcessPage: {
-          // Message type: ProcessPageMessage - Contains page number, config and display info
           const processMessage = data as ProcessPageMessage;
           await processPage(
             processMessage.pageNumber,
             processMessage.config,
-            processMessage.displayInfo
+            processMessage.displayInfo,
+            processMessage.clientId
           );
           break;
         }
 
         case WorkerMessageType.Cleanup:
         case WorkerMessageType.AbortProcessing: {
-          // Message type: CleanupMessage or AbortProcessingMessage
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+
           if (coordinatorPort) {
-            // Send the appropriate coordinator message type
             sendToCoordinator({
-              // Map worker message types to coordinator message types
               type:
                 type === WorkerMessageType.Cleanup
                   ? LibraryWorkerMessageType.CleanupDocument
                   : LibraryWorkerMessageType.AbortProcessing,
-              clientId: CLIENT_ID,
+              clientId: data.clientId || WORKER_FALLBACK_ID,
               requestId: uuidv4(),
             });
           }
@@ -160,7 +189,6 @@ if (isBrowserWithWorker() && typeof self !== "undefined") {
       }
     } catch (error) {
       logger.error(`[${workerId}] Error processing message:`, error);
-      // Send error message back to main thread
       const errorMessage: ErrorMessage = {
         type: WorkerMessageType.Error,
         error: error instanceof Error ? error.message : String(error),
@@ -171,15 +199,15 @@ if (isBrowserWithWorker() && typeof self !== "undefined") {
 }
 
 // Initialize a PDF document
-async function initPDF(pdfData: ArrayBuffer) {
+async function initPDF(pdfData: ArrayBuffer, clientId: string) {
   logger.log(`[${workerId}] Initializing PDF document`);
 
   return sendToCoordinator(
     {
       type: LibraryWorkerMessageType.InitPDF,
       pdfData,
-      clientId: CLIENT_ID,
       requestId: uuidv4(),
+      clientId,
     },
     [pdfData]
   );
@@ -189,15 +217,15 @@ async function initPDF(pdfData: ArrayBuffer) {
 async function processPage(
   pageNumber: number,
   config: PageProcessingConfig,
-  displayInfo?: DisplayInfo
+  displayInfo?: DisplayInfo,
+  clientId: string = WORKER_FALLBACK_ID
 ) {
-  // Send a direct page rendering request to the library worker
   return sendToCoordinator({
     type: LibraryWorkerMessageType.GetPage,
-    clientId: CLIENT_ID,
     pageNumber,
     requestId: uuidv4(),
     config,
     displayInfo,
+    clientId,
   });
 }

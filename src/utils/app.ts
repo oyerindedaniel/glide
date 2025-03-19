@@ -26,6 +26,14 @@ export function isBrowserWithWorker(): boolean {
 }
 
 /**
+ * Generate a short random ID for logging purposes
+ * @returns A 6-character random ID
+ */
+export function generateRandomId(): string {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+/**
  * Creates a debounced version of a function that delays its execution
  * until after a specified wait time has passed since the last invocation.
  *

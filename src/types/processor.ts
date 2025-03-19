@@ -6,6 +6,16 @@ export enum WorkerMessageType {
   Error = "ERROR",
   Cleanup = "CLEANUP",
   AbortProcessing = "ABORT_PROCESSING",
+  WorkerHeartbeat = "WORKER_HEARTBEAT",
+}
+
+/**
+ * Enum for operation names used in retry logic
+ */
+export enum OperationName {
+  WorkerInitialization = "Worker initialization",
+  PDFProcessing = "PDF processing",
+  GetPage = "Get page",
 }
 
 export interface PageProcessingConfig {
@@ -247,6 +257,14 @@ export enum RecoveryEventType {
 }
 
 /**
+ * Enum for processor events
+ */
+export enum ProcessorEventType {
+  Cleanup = "pdf-processor-cleanup",
+  Activity = "pdf-processing-activity",
+}
+
+/**
  * Event message sent from worker pool to main thread for recovery events
  */
 export interface WorkerPoolRecoveryEvent<
@@ -258,10 +276,10 @@ export interface WorkerPoolRecoveryEvent<
 }
 
 /**
- * Helper function to create a properly typed coordinator fallback message
+ * Helper function to create a typed coordinator fallback message
  * @param message The original worker message
  * @param coordinatorId The ID of the coordinator forwarding the message
- * @returns A properly typed coordinator fallback message
+ * @returns A typed coordinator fallback message
  */
 export function createCoordinatorFallbackMessage<T extends WorkerMessage>(
   message: T,
