@@ -1,3 +1,10 @@
+import {
+  DEFAULT_PDF_QUALITY,
+  DEFAULT_PDF_SCALE,
+  MAX_PDF_DIMENSION,
+} from "@/config/app";
+import { PageProcessingConfig } from "@/types/processor";
+
 const FILE_PROCESSING_EVENTS = Object.freeze({
   FILE_ADD: "fileAdd",
   PAGE_PROCESSED: "pageProcessed",
@@ -7,10 +14,6 @@ const FILE_PROCESSING_EVENTS = Object.freeze({
   //   FILE_FAILED: "fileFailed",
   TOTAL_PAGES_UPDATE: "totalPagesUpdate",
 } as const);
-
-const MAX_CONCURRENT_FILES = 2;
-const MAX_PAGE_RETRIES = 3;
-const BASE_DELAY_MS = 50;
 
 const FILE_INPUT_TYPES = {
   IMAGE: "image/",
@@ -44,10 +47,14 @@ const FILE_INPUT_TYPES = {
 export type FileInputType =
   (typeof FILE_INPUT_TYPES)[keyof typeof FILE_INPUT_TYPES];
 
+const DEFAULT_PAGE_PROCESSING_CONFIG: PageProcessingConfig = {
+  scale: DEFAULT_PDF_SCALE,
+  maxDimension: MAX_PDF_DIMENSION,
+  quality: DEFAULT_PDF_QUALITY,
+};
+
 export {
   FILE_PROCESSING_EVENTS,
-  MAX_CONCURRENT_FILES,
-  MAX_PAGE_RETRIES,
-  BASE_DELAY_MS,
+  DEFAULT_PAGE_PROCESSING_CONFIG,
   FILE_INPUT_TYPES,
 };

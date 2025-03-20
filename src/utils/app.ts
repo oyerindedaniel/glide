@@ -17,6 +17,23 @@ export function isWindowDefined(): boolean {
 }
 
 /**
+ * Checks if the environment is a browser with Web Worker support.
+ * Use this for worker-related code that requires both window and Worker.
+ * @returns {boolean} `true` if running in the browser with Worker support, otherwise `false`.
+ */
+export function isBrowserWithWorker(): boolean {
+  return typeof window !== "undefined" && typeof Worker !== "undefined";
+}
+
+/**
+ * Generate a short random ID for logging purposes
+ * @returns A 6-character random ID
+ */
+export function generateRandomId(): string {
+  return Math.random().toString(36).substring(2, 8);
+}
+
+/**
  * Creates a debounced version of a function that delays its execution
  * until after a specified wait time has passed since the last invocation.
  *
@@ -45,14 +62,11 @@ export const debounce = <T extends (...args: any[]) => void>(
  * @returns {string} - The formatted file size in MB or GB.
  */
 export function formatFileSize(bytes: number): string {
-  const MB = 1024 * 1024; // 1 MB = 1,048,576 bytes
-  const GB = MB * 1024; // 1 GB = 1,073,741,824 bytes
-
-  if (bytes >= GB) {
-    return `${(bytes / GB).toFixed(2)} GB`;
+  if (bytes >= FILE_SIZE_UNITS.GB) {
+    return `${fromBytes(bytes, "GB").toFixed(2)} GB`;
   }
 
-  return `${(bytes / MB).toFixed(2)} MB`;
+  return `${fromBytes(bytes, "MB").toFixed(2)} MB`;
 }
 
 /**
@@ -91,4 +105,90 @@ export function throttle<T extends (...args: any[]) => void>(
       }, remainingTime);
     }
   };
+}
+
+/**
+ * Calculates an exponential backoff delay.
+ *
+ * @param {number} baseDelay - The base delay in milliseconds.
+ * @param {number} attempt - The current retry attempt (starting from 1).
+ * @returns {number} The computed delay in milliseconds.
+ */
+export function getExponentialBackoffDelay(
+  baseDelay: number,
+  attempt: number
+): number {
+  if (attempt < 1) {
+    throw new Error("Attempt number must be at least 1.");
+  }
+
+  return baseDelay * Math.pow(2, attempt - 1);
+}
+
+/**
+ * File size units in bytes
+ */
+export const FILE_SIZE_UNITS = {
+  B: 1,
+  KB: 1024,
+  MB: 1024 * 1024,
+  GB: 1024 * 1024 * 1024,
+  TB: 1024 * 1024 * 1024 * 1024,
+} as const;
+
+export type FileSizeUnit = keyof typeof FILE_SIZE_UNITS;
+
+/**
+ * Converts a file size from one unit to another
+ *
+ * @param value - The value to convert
+ * @param fromUnit - The source unit (B, KB, MB, GB, TB)
+ * @param toUnit - The target unit (B, KB, MB, GB, TB)
+ * @returns The converted value
+ *
+ * @example
+ * // Convert 5MB to bytes
+ * convertFileSize(5, 'MB', 'B'); // Returns 5242880
+ *
+ * @example
+ * // Convert 5242880 bytes to MB
+ * convertFileSize(5242880, 'B', 'MB'); // Returns 5
+ */
+export function convertFileSize(
+  value: number,
+  fromUnit: FileSizeUnit,
+  toUnit: FileSizeUnit
+): number {
+  const bytesValue = value * FILE_SIZE_UNITS[fromUnit];
+  return bytesValue / FILE_SIZE_UNITS[toUnit];
+}
+
+/**
+ * Converts a value from a specified unit to bytes
+ *
+ * @param value - The value to convert to bytes
+ * @param unit - The source unit (B, KB, MB, GB, TB)
+ * @returns The value in bytes
+ *
+ * @example
+ * // Convert 5MB to bytes
+ * toBytes(5, 'MB'); // Returns 5242880
+ */
+export function toBytes(value: number, unit: FileSizeUnit = "B"): number {
+  return convertFileSize(value, unit, "B");
+}
+
+/**
+ * Converts bytes to the specified unit
+ *
+ * @param bytes - The bytes value to convert
+ * @param unit - The target unit (B, KB, MB, GB, TB)
+ * @returns The converted value in the specified unit
+ *
+ * @example
+ * // Convert 5242880 bytes to MB
+ * fromBytes(5242880, 'MB'); // Returns 5
+ */
+export function fromBytes(bytes: number, unit: FileSizeUnit = "MB"): number {
+  return convertFileSize(bytes, "B", unit);
 }

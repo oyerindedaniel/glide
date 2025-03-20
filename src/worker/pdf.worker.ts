@@ -1,398 +1,350 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
-import { WorkerMessageType, PageProcessingConfig } from "@/types/processor";
-import { LibraryWorkerMessageType } from "@/types/processor";
+import {
+  WorkerMessageType,
+  LibraryWorkerMessageType,
+  PageProcessingConfig,
+  DisplayInfo,
+  InitPDFMessage,
+  ProcessPageMessage,
+  ErrorMessage,
+  WorkerMessage,
+  CleanupOptions,
+} from "@/types/processor";
+import {
+  CoordinatorMessageType,
+  CleanupMessage as CoordinatorCleanupMessage,
+} from "@/types/coordinator";
 import { v4 as uuidv4 } from "uuid";
-import { isProduction, SCALE_CACHE_SIZE } from "@/config/app";
+import logger from "@/utils/logger";
+import { generateRandomId, isBrowserWithWorker } from "@/utils/app";
 
-// Check if we're in a browser environment
-const isBrowser =
-  typeof window !== "undefined" && typeof Worker !== "undefined";
+// Create a unique client ID for fallback purposes only
+// This should only be used if no clientId is provided in the message
+const WORKER_FALLBACK_ID = uuidv4();
 
-// Create a unique client ID
-const CLIENT_ID = uuidv4();
+// Default worker ID (will be overridden by pool's ID if provided)
+const DEFAULT_WORKER_ID = "worker_" + generateRandomId();
+let workerId = DEFAULT_WORKER_ID;
 
-// Reference to the shared library worker
-let libraryWorker: Worker | null = null;
+// Coordinator tracker variable
+let assignedCoordinatorIndex = -1;
+let coordinatorPort: MessagePort | null = null;
 
-// Track pending requests
-const pendingRequests = new Map<
-  string,
-  {
-    resolve: (value: any) => void;
-    reject: (error: Error) => void;
+// Worker heartbeat to indicate processing activity
+let heartbeatInterval: NodeJS.Timeout | null = null;
+
+function startHeartbeat(): void {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
->();
 
-// Cache for scale calculations to prevent redundant processing
-const scaleCache = new Map<string, number>();
-let cacheHits = 0;
-let cacheMisses = 0;
+  heartbeatInterval = setInterval(() => {
+    self.postMessage({
+      type: WorkerMessageType.WorkerHeartbeat,
+      timestamp: Date.now(),
+      workerId,
+    });
+  }, 3000);
+}
 
-// Setup the message handler for the library worker
-function setupLibraryWorkerMessageHandler() {
-  if (!libraryWorker || !isBrowser) return;
+// Listen for coordinator assignment
+self.addEventListener(
+  "message",
+  function coordinatorSetup(e) {
+    if (e.data.type === CoordinatorMessageType.ASSIGN_COORDINATOR) {
+      assignedCoordinatorIndex = e.data.coordinatorIndex;
 
-  libraryWorker.onmessage = (e: MessageEvent) => {
-    const { type, requestId, clientId } = e.data;
-
-    // Only process messages for this client
-    if (clientId && clientId !== CLIENT_ID) {
-      return;
-    }
-
-    // Get the pending request
-    const pendingRequest = requestId ? pendingRequests.get(requestId) : null;
-
-    if (type === WorkerMessageType.Error) {
-      const error = new Error(e.data.error);
-      if (pendingRequest) {
-        pendingRequest.reject(error);
-        pendingRequests.delete(requestId);
-      } else {
-        // Forward the error to the main thread
-        self.postMessage({
-          type: WorkerMessageType.Error,
-          error: e.data.error,
-          pageNumber: e.data.pageNumber,
-        });
+      if (e.data.workerId) {
+        workerId = e.data.workerId;
       }
-      return;
-    }
 
-    // Handle specific response types
-    switch (type) {
-      case WorkerMessageType.PDFInitialized:
-        // Forward to main thread
-        self.postMessage({
-          type: WorkerMessageType.PDFInitialized,
-          totalPages: e.data.totalPages,
-        });
-
-        console.log("PDF initialized", e.data.totalPages);
-
-        // Resolve the pending request
-        if (pendingRequest) {
-          pendingRequest.resolve(e.data);
-          pendingRequests.delete(requestId);
-        }
-        break;
-
-      case WorkerMessageType.PageProcessed:
-        // Forward the processed page data
-        self.postMessage(
-          {
-            type: WorkerMessageType.PageProcessed,
-            pageNumber: e.data.pageNumber,
-            blobData: e.data.blobData,
-            dimensions: e.data.dimensions,
-          },
-          [e.data.blobData]
-        );
-
-        if (pendingRequest) {
-          pendingRequest.resolve({
-            pageNumber: e.data.pageNumber,
-            dimensions: e.data.dimensions,
-          });
-          pendingRequests.delete(requestId);
-        }
-        break;
-
-      case LibraryWorkerMessageType.GetPage:
-        if (pendingRequest) {
-          pendingRequest.resolve(e.data);
-          pendingRequests.delete(requestId);
-        }
-        break;
-
-      case LibraryWorkerMessageType.CleanupDocument:
-      case LibraryWorkerMessageType.AbortProcessing:
-        // These are just acknowledgments
-        if (pendingRequest) {
-          pendingRequest.resolve(e.data);
-          pendingRequests.delete(requestId);
-        }
-        break;
-
-      default:
-        console.warn(`Unknown message type from library worker: ${type}`);
-    }
-  };
-}
-
-// Initialize the library worker connection
-async function initializeLibraryWorker() {
-  if (!isBrowser) return null;
-  if (libraryWorker) return libraryWorker;
-
-  // Dynamic import to avoid circular dependencies
-  const { PDFWorkerPool } = await import("./pdf.worker-pool");
-  libraryWorker = PDFWorkerPool.getSharedLibraryWorker();
-
-  // Setup the message handler
-  setupLibraryWorkerMessageHandler();
-
-  return libraryWorker;
-}
-
-// Function to send request to library worker and track it
-async function sendRequest(message: any): Promise<any> {
-  if (!isBrowser) {
-    return Promise.reject(
-      new Error("Workers are only available in browser environments")
-    );
-  }
-
-  // Make sure the library worker is initialized
-  await initializeLibraryWorker();
-
-  if (!libraryWorker) {
-    throw new Error("Failed to initialize library worker");
-  }
-
-  return new Promise((resolve, reject) => {
-    const requestId = uuidv4();
-
-    pendingRequests.set(requestId, { resolve, reject });
-
-    libraryWorker!.postMessage(
-      {
-        ...message,
-        clientId: CLIENT_ID,
-        requestId,
-      },
-      message.transferables || []
-    );
-  });
-}
-
-// Calculate the optimal scale for rendering
-function calculateOptimalScale(
-  pdfWidth: number,
-  pdfHeight: number,
-  config: PageProcessingConfig,
-  displayInfo?: {
-    devicePixelRatio: number;
-    containerWidth: number;
-    containerHeight?: number;
-  }
-): number {
-  // Create a cache key from all input parameters
-  const cacheKey = `${pdfWidth}-${pdfHeight}-${config.scale}-${config.maxDimension}-${displayInfo?.devicePixelRatio}-${displayInfo?.containerWidth}-${displayInfo?.containerHeight}`;
-
-  // Check for cache hit and provide more detailed logging
-  if (scaleCache.has(cacheKey)) {
-    const cachedValue = scaleCache.get(cacheKey)!;
-    cacheHits++;
-    console.log(
-      `CACHE HIT #${cacheHits} ✓ Key: ${cacheKey}, Value: ${cachedValue}, Cache size: ${scaleCache.size}`
-    );
-    return cachedValue; // This should exit the function immediately
-  }
-
-  cacheMisses++;
-  console.log(
-    `CACHE MISS #${cacheMisses} ✗ Key: ${cacheKey}, Computing new scale...`
-  );
-
-  const baseScale = config.scale;
-  const pixelRatio = displayInfo?.devicePixelRatio || 1;
-
-  // Consider device pixel ratio for high-DPI displays
-  const dprAdjustedScale = baseScale * Math.min(pixelRatio, 2);
-
-  // Calculate container-based scale if container width is provided
-  let containerScale = baseScale;
-  if (displayInfo?.containerWidth) {
-    // Target 98% of container width to allow for some margin
-    const targetWidth = displayInfo.containerWidth * 0.98;
-
-    // Calculate scale needed to fit PDF width to target width
-    containerScale = targetWidth / pdfWidth;
-
-    // Consider height constraint if provided
-    if (displayInfo.containerHeight) {
-      const targetHeight = displayInfo.containerHeight;
-      const heightScale = targetHeight / pdfHeight;
-      containerScale = Math.min(containerScale, heightScale);
-    }
-    // Ensure containerScale is at least the minimum quality scale
-    containerScale = Math.max(containerScale, 1.0);
-  }
-
-  let candidateScale = Math.max(dprAdjustedScale, containerScale);
-  const maxDimensionScale = config.maxDimension / Math.max(pdfWidth, pdfHeight);
-
-  // Ensure we don't exceed the maxDimension constraint
-  candidateScale = Math.min(candidateScale, maxDimensionScale);
-
-  // Set minimum scale to ensure quality doesn't drop too low
-  // Higher minimum for high-DPI displays
-  const minScale = pixelRatio > 1.5 ? 1.2 : 1.0;
-  const optimalScale = Math.max(candidateScale, minScale);
-
-  // Store result in cache
-  scaleCache.set(cacheKey, optimalScale);
-
-  // At the end, before returning
-  console.log(
-    `Calculated new scale: ${optimalScale}, Cache stats - Hits: ${cacheHits}, Misses: ${cacheMisses}, Size: ${scaleCache.size}`
-  );
-  return optimalScale;
-}
-
-export type WorkerMessage =
-  | {
-      type: WorkerMessageType.InitPDF;
-      pdfData: ArrayBuffer;
-    }
-  | {
-      type: WorkerMessageType.ProcessPage;
-      pageNumber: number;
-      config: PageProcessingConfig;
-      displayInfo?: {
-        devicePixelRatio: number;
-        containerWidth: number;
-        containerHeight?: number;
-      };
-    }
-  | {
-      type: WorkerMessageType.AbortProcessing;
-    }
-  | {
-      type: WorkerMessageType.Cleanup;
-    };
-
-export type WorkerResponse =
-  | {
-      type: WorkerMessageType.PageProcessed;
-      pageNumber: number;
-      blobData: ArrayBuffer;
-      dimensions: { width: number; height: number };
-    }
-  | {
-      type: WorkerMessageType.PDFInitialized;
-      totalPages: number;
-    }
-  | {
-      type: WorkerMessageType.Error;
-      pageNumber?: number;
-      error: string;
-    };
-
-// Main worker message handler - only set up in browser environments
-if (isBrowser && typeof self !== "undefined") {
-  self.onmessage = async (e: MessageEvent<WorkerMessage>) => {
-    try {
-      // Add message ID for tracking
-      const msgId = Math.random().toString(36).substring(2, 8);
-      console.log(
-        `[${msgId}] Worker received message: ${
-          e.data.type
-        } (${Date.now()}), Cache size: ${scaleCache.size}`
+      logger.log(
+        `[${workerId}] Worker assigned to coordinator ${assignedCoordinatorIndex}`
       );
 
-      // Clean up scale cache if it gets too large
-      if (scaleCache.size > SCALE_CACHE_SIZE) {
-        if (!isProduction) {
-          console.log(
-            `[${msgId}] Cleaning up scale cache, size: ${scaleCache.size}`
-          );
-        }
-        scaleCache.clear();
-        cacheHits = 0;
-        cacheMisses = 0;
+      if (e.ports && e.ports.length > 0) {
+        coordinatorPort = e.ports[0];
+
+        // Set up message handler for the coordinator port
+        coordinatorPort.onmessage = handleCoordinatorMessage;
+
+        coordinatorPort.start();
+
+        logger.log(
+          `[${workerId}] Direct communication with coordinator established`
+        );
+      } else {
+        logger.error(
+          `[${workerId}] No coordinator port provided in ASSIGN_COORDINATOR message`
+        );
       }
 
-      switch (e.data.type) {
-        case WorkerMessageType.InitPDF:
-          // Forward the PDF initialization request to the library worker
-          await sendRequest({
-            type: LibraryWorkerMessageType.InitPDF,
-            pdfData: e.data.pdfData,
-            transferables: [e.data.pdfData],
-          });
+      // One-time listener
+      self.removeEventListener("message", coordinatorSetup);
+    }
+  },
+  { once: true }
+);
+
+// Handle messages from the coordinator
+function handleCoordinatorMessage(e: MessageEvent<WorkerMessage>): void {
+  // Process the response from the coordinator/library
+  const { type, clientId } = e.data;
+
+  logger.log(
+    `[${workerId}] Worker received response from coordinator: ${type}${
+      clientId ? `, client: ${clientId}` : ""
+    }`
+  );
+
+  // Forward the message to the main thread
+  self.postMessage(e.data);
+}
+
+// Function to send messages to the coordinator
+function sendToCoordinator(
+  message: {
+    type: WorkerMessageType | LibraryWorkerMessageType;
+    clientId: string;
+    requestId?: string;
+    [key: string]: unknown;
+  },
+  transfer: Transferable[] = []
+): boolean {
+  if (!coordinatorPort) {
+    logger.error(
+      `[${workerId}] No coordinator port available, cannot send message`
+    );
+    return false;
+  }
+
+  try {
+    // Ensure we're not overriding an existing client ID
+    if (!message.clientId) {
+      // Only use fallback ID if no client ID was provided
+      message.clientId = WORKER_FALLBACK_ID;
+    }
+
+    coordinatorPort.postMessage(message, transfer);
+    return true;
+  } catch (error) {
+    logger.error(`[${workerId}] Error sending message to coordinator:`, error);
+    return false;
+  }
+}
+
+// Main worker message handler
+if (isBrowserWithWorker() && typeof self !== "undefined") {
+  startHeartbeat();
+
+  self.onmessage = async (e: MessageEvent) => {
+    const data = e.data;
+    const { type } = data;
+
+    logger.log(
+      `[${workerId}] Worker received message: ${type} (${Date.now()})`
+    );
+
+    try {
+      if (type === CoordinatorMessageType.ASSIGN_COORDINATOR) {
+        logger.log(
+          `[${workerId}] Skipping ASSIGN_COORDINATOR in main handler as it's handled by coordinatorSetup`
+        );
+        return;
+      }
+
+      switch (type) {
+        case WorkerMessageType.InitPDF: {
+          const initMessage = data as InitPDFMessage;
+          await initPDF(
+            initMessage.pdfData,
+            initMessage.clientId || WORKER_FALLBACK_ID
+          );
           break;
+        }
 
-        case WorkerMessageType.ProcessPage:
-          {
-            const { pageNumber, config, displayInfo } = e.data;
-
-            console.log(
-              `START ProcessPage: Page ${pageNumber} (${Date.now()})`
-            );
-
-            // First get the page information
-            const pageInfo = await sendRequest({
-              type: LibraryWorkerMessageType.GetPage,
-              pageNumber,
-            });
-
-            console.log(
-              `Got page info: Page ${pageNumber}, Dimensions: ${pageInfo.width}x${pageInfo.height}`
-            );
-
-            // Calculate the optimal scale
-            const optimalScale = calculateOptimalScale(
-              pageInfo.width,
-              pageInfo.height,
-              config,
-              displayInfo
-            );
-
-            console.log(
-              `Scale calculated: Page ${pageNumber}, Scale: ${optimalScale}`
-            );
-
-            // Request the page rendering
-            await sendRequest({
-              type: LibraryWorkerMessageType.RenderPage,
-              pageNumber,
-              viewport: {
-                scale: optimalScale,
-                rotation: pageInfo.rotation,
-              },
-              config,
-            });
-
-            console.log(`END ProcessPage: Page ${pageNumber} (${Date.now()})`);
-          }
+        case WorkerMessageType.ProcessPage: {
+          const processMessage = data as ProcessPageMessage;
+          await processPage(
+            processMessage.pageNumber,
+            processMessage.config,
+            processMessage.displayInfo,
+            processMessage.clientId
+          );
           break;
-
-        case WorkerMessageType.AbortProcessing:
-          // Forward the abort request
-          await sendRequest({
-            type: LibraryWorkerMessageType.AbortProcessing,
-          });
-          // Clear scale cache on abort
-          scaleCache.clear();
-          break;
+        }
 
         case WorkerMessageType.Cleanup:
-          // Forward the cleanup request
-          await sendRequest({
-            type: LibraryWorkerMessageType.CleanupDocument,
-          });
-          // Clear scale cache on cleanup
-          scaleCache.clear();
+        case WorkerMessageType.AbortProcessing: {
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+
+          if (coordinatorPort) {
+            // Choose the appropriate library worker message type based on the incoming message
+            const libraryMsgType =
+              type === WorkerMessageType.AbortProcessing
+                ? LibraryWorkerMessageType.AbortProcessing
+                : LibraryWorkerMessageType.CleanupDocument;
+
+            sendToCoordinator({
+              type: libraryMsgType,
+              clientId: data.clientId || WORKER_FALLBACK_ID,
+              requestId: uuidv4(),
+            });
+          }
           break;
+        }
+
+        // Special case for coordinator-initiated full cleanup
+        case CoordinatorMessageType.CLEANUP: {
+          const cleanupMessage = data as CoordinatorCleanupMessage;
+          const cleanupOptions =
+            cleanupMessage.options || ({} as CleanupOptions);
+          const clientIdToClean = cleanupMessage.clientId;
+          const responseRequired = cleanupMessage.responseRequired !== false; // Default to true
+          const cleanupRequestId = cleanupMessage.requestId || "";
+          const ports = e.ports;
+
+          logger.log(
+            `[${workerId}] Received cleanup request${
+              clientIdToClean
+                ? ` for client ${clientIdToClean}`
+                : " for worker termination"
+            }`
+          );
+
+          // Clear heartbeat immediately in all cases
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+
+          const shouldCloseChannels = cleanupOptions.closeChannels !== false; // Default to true
+
+          // Client-specific cleanup
+          if (clientIdToClean) {
+            logger.log(
+              `[${workerId}] Performing client-specific cleanup for: ${clientIdToClean}`
+            );
+
+            // Send success response
+            if (responseRequired) {
+              const responseMessage = {
+                type: CoordinatorMessageType.CLEANUP,
+                clientId: clientIdToClean,
+                requestId: cleanupRequestId,
+                success: true,
+                isWorkerCleanupResponse: true,
+              };
+
+              // If we have a port to respond to
+              if (ports && ports.length > 0) {
+                const responsePort = ports[0];
+                responsePort.postMessage(responseMessage);
+                logger.log(
+                  `[${workerId}] Sent cleanup response via port for client ${clientIdToClean}`
+                );
+              } else {
+                // Respond via main thread
+                self.postMessage(responseMessage);
+                logger.log(
+                  `[${workerId}] Sent cleanup response via self.postMessage for client ${clientIdToClean}`
+                );
+              }
+            }
+          }
+          // Full worker cleanup
+          else {
+            logger.log(`[${workerId}] Performing full worker cleanup`);
+
+            // Close coordinator port if requested
+            if (shouldCloseChannels && coordinatorPort) {
+              try {
+                logger.log(`[${workerId}] Closing coordinator port`);
+                coordinatorPort.close();
+                coordinatorPort = null;
+                assignedCoordinatorIndex = -1;
+              } catch (error) {
+                logger.error(
+                  `[${workerId}] Error closing coordinator port:`,
+                  error
+                );
+              }
+            }
+
+            // Send the success response
+            const responseMessage = {
+              type: CoordinatorMessageType.CLEANUP,
+              requestId: cleanupRequestId,
+              success: true,
+              isWorkerCleanupResponse: true,
+            };
+
+            // If we have a port to respond to
+            if (ports && ports.length > 0) {
+              const responsePort = ports[0];
+              responsePort.postMessage(responseMessage);
+              logger.log(
+                `[${workerId}] Sent worker termination response via port`
+              );
+            } else {
+              // Respond via main thread
+              self.postMessage(responseMessage);
+              logger.log(
+                `[${workerId}] Sent worker termination response via self.postMessage`
+              );
+            }
+          }
+
+          logger.log(`[${workerId}] Worker cleanup process completed`);
+          break;
+        }
 
         default:
-          throw new Error("Unknown message type");
+          logger.warn(`[${workerId}] Unknown message type: ${type}`);
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      const response: WorkerResponse = {
+      logger.error(`[${workerId}] Error processing message:`, error);
+      const errorMessage: ErrorMessage = {
         type: WorkerMessageType.Error,
-        error: errorMessage,
-        pageNumber:
-          e.data.type === WorkerMessageType.ProcessPage
-            ? e.data.pageNumber
-            : undefined,
+        clientId: data?.clientId || WORKER_FALLBACK_ID,
+        error: error instanceof Error ? error.message : String(error),
       };
-      self.postMessage(response);
+      self.postMessage(errorMessage);
     }
   };
+}
+
+// Initialize a PDF document
+async function initPDF(pdfData: ArrayBuffer, clientId: string) {
+  logger.log(`[${workerId}] Initializing PDF document`);
+
+  return sendToCoordinator(
+    {
+      type: LibraryWorkerMessageType.InitPDF,
+      pdfData,
+      requestId: uuidv4(),
+      clientId,
+    },
+    [pdfData]
+  );
+}
+
+// Process a page
+async function processPage(
+  pageNumber: number,
+  config: PageProcessingConfig,
+  displayInfo?: DisplayInfo,
+  clientId: string = WORKER_FALLBACK_ID
+) {
+  return sendToCoordinator({
+    type: LibraryWorkerMessageType.GetPage,
+    pageNumber,
+    requestId: uuidv4(),
+    config,
+    displayInfo,
+    clientId,
+  });
 }

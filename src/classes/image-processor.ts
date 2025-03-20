@@ -4,13 +4,6 @@ import { delay } from "@/utils/app";
 import { toast } from "sonner";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 
-// Constants for image size management
-const SIZE_LIMITS = {
-  SINGLE_IMAGE_MAX_SIZE: 8 * 1024 * 1024, // 8MB per image
-  TOTAL_BATCH_MAX_SIZE: 500 * 1024 * 1024, // 500MB total
-  MAX_FILES_IN_BATCH: 100, // Maximum 100 images
-};
-
 export interface ImageProcessingCallbacks {
   onFileAdd: (
     fileName: string,
@@ -31,22 +24,7 @@ export interface FileValidationResult {
 }
 
 export class ImageBatchProcessor {
-  private maxFilesInBatch: number;
-  private singleImageMaxSize: number;
-  private totalBatchMaxSize: number;
-  private allowedImageTypes: string[];
-
-  constructor({
-    maxFilesInBatch = SIZE_LIMITS.MAX_FILES_IN_BATCH,
-    singleImageMaxSize = SIZE_LIMITS.SINGLE_IMAGE_MAX_SIZE,
-    totalBatchMaxSize = SIZE_LIMITS.TOTAL_BATCH_MAX_SIZE,
-    allowedImageTypes = ["image/png", "image/jpeg", "image/webp"],
-  } = {}) {
-    this.maxFilesInBatch = maxFilesInBatch;
-    this.singleImageMaxSize = singleImageMaxSize;
-    this.totalBatchMaxSize = totalBatchMaxSize;
-    this.allowedImageTypes = allowedImageTypes;
-  }
+  constructor({} = {}) {}
 
   /**
    * Process a batch of images

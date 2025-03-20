@@ -25,3 +25,5 @@ parentRef (e.g., <div>)
 
 
 Review shared Worker used at pdf processing. it stops the Concurrency
+
+[App] → [Processing Worker 1,2,3] → [Single Shared Library Worker] → [PDF.js]
