@@ -273,7 +273,7 @@ function handleProcessingWorkerMessage(
   // For other message types, ensure a port is provided
   if (!ports || ports.length === 0) {
     logger.error(
-      `[Coordinator ${coordinatorId}] No port provided for communication`
+      `[Coordinator ${coordinatorId}] No port provided for communication ${type}`
     );
     return;
   }

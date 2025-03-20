@@ -192,18 +192,19 @@ export class PDFWorkerPool {
       this.coordinatorStatusInterval = null;
     }
 
-    this.coordinatorStatusInterval = setInterval(() => {
-      this.coordinators.forEach((coordinator, index) => {
-        try {
-          const statusMessage = {
-            type: CoordinatorMessageType.COORDINATOR_STATUS,
-          };
-          coordinator.postMessage(statusMessage);
-        } catch (err) {
-          logger.error(`Error sending heartbeat to coordinator ${index}:`, err);
-        }
-      });
-    }, 30000) as NodeJS.Timeout;
+    // TODO: Revisit this not needed for now a port is needed for messages
+    // this.coordinatorStatusInterval = setInterval(() => {
+    //   this.coordinators.forEach((coordinator, index) => {
+    //     try {
+    //       const statusMessage = {
+    //         type: CoordinatorMessageType.COORDINATOR_STATUS,
+    //       };
+    //       coordinator.postMessage(statusMessage);
+    //     } catch (err) {
+    //       logger.error(`Error sending heartbeat to coordinator ${index}:`, err);
+    //     }
+    //   });
+    // }, 30000) as NodeJS.Timeout;
   }
 
   /**
