@@ -36,6 +36,15 @@ import {
   ConcurrencyOptions,
   calculateOptimalCoordinatorCount,
 } from "@/utils/concurrency";
+import {
+  WorkerError,
+  WorkerInitializationError,
+  WorkerTimeoutError,
+  WorkerCleanupError,
+  WorkerCommunicationError,
+  WorkerPoolError,
+  ErrorCode,
+} from "@/utils/error";
 
 // Reference to the shared PDF.js library worker
 let sharedLibraryWorker: Worker | null = null;
@@ -670,8 +679,9 @@ export class PDFWorkerPool {
 
   public async getWorker(): Promise<Worker> {
     if (!isBrowserWithWorker()) {
-      return Promise.reject(
-        new Error("Workers are only available in browser environments")
+      throw new WorkerError(
+        "Workers are only available in browser environments",
+        ErrorCode.WORKER_INIT_ERROR
       );
     }
 
@@ -698,68 +708,88 @@ export class PDFWorkerPool {
       const coordinatorIndex = this.workers.length % this.coordinatorCount;
       const coordinator = this.coordinators[coordinatorIndex];
 
+      if (!coordinator) {
+        throw new WorkerPoolError(
+          `No coordinator available at index ${coordinatorIndex}`
+        );
+      }
+
       // Create a message channel for direct worker-coordinator communication
       const workerCoordinatorChannel = new MessageChannel();
       const workerId = uuidv4();
 
-      // Initialize the worker with its coordinator information and port1
-      const assignMessage: AssignCoordinatorMessage = {
-        type: CoordinatorMessageType.ASSIGN_COORDINATOR,
-        coordinatorIndex,
-        workerId: workerId,
-      };
+      try {
+        // Initialize the worker with its coordinator information and port1
+        const assignMessage: AssignCoordinatorMessage = {
+          type: CoordinatorMessageType.ASSIGN_COORDINATOR,
+          coordinatorIndex,
+          workerId: workerId,
+        };
 
-      worker.postMessage(assignMessage, [workerCoordinatorChannel.port1]);
+        worker.postMessage(assignMessage, [workerCoordinatorChannel.port1]);
 
-      // Send port2 to the coordinator with a reference to this worker
-      const registerWorkerMessage: RegisterWorkerMessage = {
-        type: CoordinatorMessageType.REGISTER_WORKER,
-        workerId: workerId,
-      };
+        // Send port2 to the coordinator with a reference to this worker
+        const registerWorkerMessage: RegisterWorkerMessage = {
+          type: CoordinatorMessageType.REGISTER_WORKER,
+          workerId: workerId,
+        };
 
-      coordinator.postMessage(registerWorkerMessage, [
-        workerCoordinatorChannel.port2,
-      ]);
+        coordinator.postMessage(registerWorkerMessage, [
+          workerCoordinatorChannel.port2,
+        ]);
 
-      // Create a message handler for client tracking
-      const clientTrackingHandler = (e: MessageEvent<WorkerMessage>) => {
-        const data = e.data;
+        // Create a message handler for client tracking
+        const clientTrackingHandler = (e: MessageEvent<WorkerMessage>) => {
+          const data = e.data;
 
-        // Listen for PDFInitialized messages (response to InitPDF)
-        if (data.type === WorkerMessageType.PDFInitialized) {
-          const initMessage = data as PDFInitializedMessage;
-          if (initMessage.clientId) {
-            logger.log(
-              `Worker sent PDFInitialized for client ${initMessage.clientId}, with ${initMessage.totalPages} pages`
-            );
-            this.trackClient(initMessage.clientId);
+          // Listen for PDFInitialized messages (response to InitPDF)
+          if (data.type === WorkerMessageType.PDFInitialized) {
+            const initMessage = data as PDFInitializedMessage;
+            if (initMessage.clientId) {
+              logger.log(
+                `Worker sent PDFInitialized for client ${initMessage.clientId}, with ${initMessage.totalPages} pages`
+              );
+              this.trackClient(initMessage.clientId);
+            }
           }
-        }
 
-        // Listen for cleanup and abort messages
-        if (
-          data.type === WorkerMessageType.Cleanup ||
-          data.type === WorkerMessageType.AbortProcessing
-        ) {
-          const cleanupMessage = data as WorkerCleanupMessage;
-          if (cleanupMessage.clientId) {
-            logger.log(
-              `Worker sent cleanup for client ${cleanupMessage.clientId}`
-            );
-            this.activeClients.delete(cleanupMessage.clientId);
+          // Listen for cleanup and abort messages
+          if (
+            data.type === WorkerMessageType.Cleanup ||
+            data.type === WorkerMessageType.AbortProcessing
+          ) {
+            const cleanupMessage = data as WorkerCleanupMessage;
+            if (cleanupMessage.clientId) {
+              logger.log(
+                `Worker sent cleanup for client ${cleanupMessage.clientId}`
+              );
+              this.activeClients.delete(cleanupMessage.clientId);
+            }
           }
+        };
+
+        // Set up a listener for client tracking
+        worker.addEventListener("message", clientTrackingHandler);
+
+        // Store the handler for cleanup later
+        this.workerHandlers.set(worker, clientTrackingHandler);
+
+        this.workers.push(worker);
+        this.workerCoordinatorChannels.push(workerCoordinatorChannel);
+        return worker;
+      } catch (error) {
+        // Clean up the worker if initialization fails
+        try {
+          worker.terminate();
+        } catch (terminateError) {
+          logger.warn("Error terminating failed worker:", terminateError);
         }
-      };
-
-      // Set up a listener for client tracking
-      worker.addEventListener("message", clientTrackingHandler);
-
-      // Store the handler for cleanup later
-      this.workerHandlers.set(worker, clientTrackingHandler);
-
-      this.workers.push(worker);
-      this.workerCoordinatorChannels.push(workerCoordinatorChannel);
-      return worker;
+        throw new WorkerInitializationError(
+          `Failed to initialize worker: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
+      }
     }
 
     // If we've reached max workers, queue the request
@@ -846,8 +876,9 @@ export class PDFWorkerPool {
     coordinatorIndex?: number
   ): Promise<CoordinatorStatusMessage | null> {
     if (!isBrowserWithWorker()) {
-      return Promise.reject(
-        new Error("Workers are only available in browser environments")
+      throw new WorkerError(
+        "Workers are only available in browser environments",
+        ErrorCode.WORKER_INIT_ERROR
       );
     }
 
@@ -864,11 +895,10 @@ export class PDFWorkerPool {
 
     const coordinator = this.coordinators[targetIndex];
     if (!coordinator) {
-      logger.error(`No coordinator found at index ${targetIndex}`);
-      return null;
+      throw new WorkerPoolError(`No coordinator found at index ${targetIndex}`);
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const statusRequestId = uuidv4();
 
       // Create a message channel for the response
@@ -891,13 +921,27 @@ export class PDFWorkerPool {
         requestId: statusRequestId,
       };
 
-      // Send the request with the port
-      coordinator.postMessage(statusRequest, [channel.port2]);
+      try {
+        // Send the request with the port
+        coordinator.postMessage(statusRequest, [channel.port2]);
+      } catch (error) {
+        channel.port1.close();
+        reject(
+          new WorkerCommunicationError(
+            `Failed to communicate with coordinator ${targetIndex}: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          )
+        );
+      }
 
       setTimeout(() => {
         channel.port1.close();
-        logger.warn(`Status request to coordinator ${targetIndex} timed out`);
-        resolve(null);
+        reject(
+          new WorkerTimeoutError(
+            `Status request to coordinator ${targetIndex} timed out`
+          )
+        );
       }, 3000);
     });
   }
@@ -918,12 +962,9 @@ export class PDFWorkerPool {
     } = {}
   ): Promise<CleanupResponse> {
     if (!isBrowserWithWorker() || !clientId) {
-      return {
-        success: false,
-        workerResponses: 0,
-        coordinatorResponses: 0,
-        timedOut: false,
-      } satisfies CleanupResponse;
+      throw new WorkerCleanupError(
+        "Cleanup operation failed: Invalid environment or client ID"
+      );
     }
 
     const {

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import manrope from "@/assets/fonts";
 import { cn } from "@/lib/utils";
-import { Toaster } from "@/components/ui/sonner";
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "Glide",
@@ -26,7 +26,19 @@ export default function RootLayout({
         )}
       >
         {children}
-        <Toaster />
+        <SonnerToaster
+          toastOptions={{
+            classNames: {
+              toast:
+                "rounded-xl gap-2 text-base text-white font-semibold py-4 px-6 border-none",
+              title: "font-semibold text-background",
+              icon: "text-white",
+              success: "bg-green-500",
+              warning: "bg-yellow-500",
+              error: "bg-red-500",
+            },
+          }}
+        />
       </body>
     </html>
   );

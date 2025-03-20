@@ -14,6 +14,7 @@ import { FileUploadOptionsPanel } from "./panels/file-upload-options";
 import { FILE_INPUT_TYPES } from "@/constants/processing";
 import { useShallow } from "zustand/shallow";
 import { useFileProcessing } from "@/hooks/use-file-processing";
+import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 
 const ALLOWED_IMAGE_TYPES = [
   FILE_INPUT_TYPES.PNG,
@@ -30,6 +31,7 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
   const dropOverlayRef = useRef<HTMLDivElement>(null);
   const uploadAreaRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const animateTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const {
     setIsDragging: setIsDraggingStore,
@@ -47,12 +49,24 @@ const FileDropZone = forwardRef<HTMLDivElement, object>(function FileDropZone(
 
   // Animation function for the file processing hook
   const animateFileUpload = useCallback(
-    async (filesLength: number) => {
+    async (files: File[]) => {
       animateToSnapPosition();
 
-      setTimeout(() => {
-        useProcessedFilesStore.getState().setTotalFiles(filesLength);
-      }, ANIMATION_DURATION - 50);
+      if (animateTimeout.current) {
+        clearTimeout(animateTimeout.current);
+      }
+
+      animateTimeout.current = setTimeout(() => {
+        batchedUpdates(() => {
+          useProcessedFilesStore.getState().setTotalFiles(files.length);
+          files.forEach((file) => {
+            if (file.type === FILE_INPUT_TYPES.PDF) {
+              // not necessary for images
+              useProcessedFilesStore.getState().addFile(file.name);
+            }
+          });
+        });
+      }, Math.max(ANIMATION_DURATION - 100, 0));
 
       // Delays processing (progress animation duration)
       await delay(ANIMATION_DURATION);

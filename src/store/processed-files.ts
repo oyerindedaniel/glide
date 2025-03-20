@@ -1,4 +1,6 @@
+import { FILE_INPUT_TYPES } from "@/constants/processing";
 import { create } from "zustand";
+import { revokeBlobUrl, revokeBlobUrls } from "@/utils/file";
 
 enum ProcessingStatus {
   NOT_STARTED = "not_started",
@@ -37,8 +39,8 @@ interface ProcessedFileState {
   // Methods to manage the store
   addFile: (
     fileName: string,
-    totalPages: number,
-    metadata: { size: number; type: string }
+    totalPages?: number,
+    metadata?: { size: number; type: string }
   ) => void;
   addPageToFile: (
     fileName: string,
@@ -82,7 +84,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   allPages: [],
 
   /**
-   * Adds a new file with a NOT_STARTED status and prepares its pages.
+   * Adds or updates a file with its pages and metadata.
    */
   addFile: (fileName, totalPages, metadata) => {
     set((state) => {
@@ -90,29 +92,88 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       const newFileStatus = new Map(state.fileStatus);
       const newFileMetadata = new Map(state.fileMetadata);
 
-      if (!newProcessedFiles.has(fileName)) {
-        const pages = new Map<number, PageStatus>();
-        for (let i = 1; i <= totalPages; i++) {
-          pages.set(i, {
-            url: "",
-            status: ProcessingStatus.NOT_STARTED,
-          });
-        }
-        newProcessedFiles.set(fileName, pages);
-        newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
-        newFileMetadata.set(fileName, metadata);
+      const fileExists = newProcessedFiles.has(fileName);
+      const existingFile = fileExists ? newProcessedFiles.get(fileName)! : null;
+      const existingMetadata = fileExists
+        ? newFileMetadata.get(fileName)
+        : null;
+
+      // Default values
+      const defaultTotalPages = 1;
+      const defaultMetadata = { size: 0, type: FILE_INPUT_TYPES.PDF };
+
+      // If file exists and has complete data, don't update
+      if (
+        fileExists &&
+        existingFile &&
+        existingFile.size > 0 &&
+        existingMetadata
+      ) {
+        return state;
       }
+
+      const actualTotalPages = totalPages ?? defaultTotalPages;
+      const actualMetadata = metadata ?? defaultMetadata;
+
+      if (fileExists && existingFile) {
+        const currentPageCount = existingFile.size;
+
+        if (actualTotalPages !== currentPageCount) {
+          if (actualTotalPages > currentPageCount) {
+            // Add new pages
+            for (let i = currentPageCount + 1; i <= actualTotalPages; i++) {
+              existingFile.set(i, {
+                url: "",
+                status: ProcessingStatus.NOT_STARTED,
+              });
+            }
+          } else {
+            // Remove excess pages
+            for (let i = actualTotalPages + 1; i <= currentPageCount; i++) {
+              const page = existingFile.get(i);
+              revokeBlobUrl(page?.url);
+              existingFile.delete(i);
+            }
+          }
+        }
+
+        // Update metadata if different from current
+        if (
+          actualMetadata.size !== existingMetadata?.size ||
+          actualMetadata.type !== existingMetadata?.type
+        ) {
+          newFileMetadata.set(fileName, actualMetadata);
+        }
+
+        return {
+          processedFiles: newProcessedFiles,
+          fileStatus: newFileStatus,
+          fileMetadata: newFileMetadata,
+          totalPages: state.totalPages + (actualTotalPages - currentPageCount),
+        };
+      }
+
+      // Create new file
+      const pages = new Map<number, PageStatus>();
+      for (let i = 1; i <= actualTotalPages; i++) {
+        pages.set(i, { url: "", status: ProcessingStatus.NOT_STARTED });
+      }
+
+      newProcessedFiles.set(fileName, pages);
+      newFileStatus.set(fileName, ProcessingStatus.NOT_STARTED);
+      newFileMetadata.set(fileName, actualMetadata);
 
       return {
         processedFiles: newProcessedFiles,
         fileStatus: newFileStatus,
         fileMetadata: newFileMetadata,
-        totalPages: state.totalPages + totalPages,
+        totalPages: state.totalPages + actualTotalPages,
       };
     });
 
     get().computeStatusCounts();
   },
+
   /**
    * Adds or updates a page URL and its status (default is COMPLETED).
    */
@@ -127,8 +188,6 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       const filePages =
         newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
       const newFilePages = new Map<number, PageStatus>(filePages);
-
-      console.log("Adding page to file", fileName, pageNumber, url, status);
 
       newFilePages.set(pageNumber, { url, status });
       newProcessedFiles.set(fileName, newFilePages);
@@ -249,11 +308,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   reset: () => {
     set((state) => {
       state.processedFiles.forEach((pages) => {
-        pages.forEach((page) => {
-          if (page.url && page.url.startsWith("blob:")) {
-            URL.revokeObjectURL(page.url);
-          }
-        });
+        const urls = Array.from(pages.values()).map((page) => page.url);
+        revokeBlobUrls(urls);
       });
 
       return {
@@ -325,11 +381,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       // Revoke blob URLs for all pages of the file before deletion
       const pages = newProcessedFiles.get(fileName);
       if (pages) {
-        pages.forEach((page) => {
-          if (page.url && page.url.startsWith("blob:")) {
-            URL.revokeObjectURL(page.url);
-          }
-        });
+        const urls = Array.from(pages.values()).map((page) => page.url);
+        revokeBlobUrls(urls);
       }
 
       newProcessedFiles.delete(fileName);
@@ -356,9 +409,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       if (pages) {
         // Revoke blob URL for the specific page before deletion
         const page = pages.get(pageNumber);
-        if (page && page.url && page.url.startsWith("blob:")) {
-          URL.revokeObjectURL(page.url);
-        }
+        revokeBlobUrl(page?.url);
         pages.delete(pageNumber);
         newProcessedFiles.set(fileName, pages);
       }
