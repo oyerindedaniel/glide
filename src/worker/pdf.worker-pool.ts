@@ -31,9 +31,21 @@ import {
 import logger from "@/utils/logger";
 import { isBrowserWithWorker } from "@/utils/app";
 import recoveryEmitter from "@/utils/recovery-event-emitter";
+import {
+  createConcurrencyConfig,
+  ConcurrencyOptions,
+  calculateOptimalCoordinatorCount,
+} from "@/utils/concurrency";
 
 // Reference to the shared PDF.js library worker
 let sharedLibraryWorker: Worker | null = null;
+
+export interface WorkerPoolOptions {
+  maxWorkers?: number;
+  coordinatorCount?: number;
+  detectOptimalConcurrency?: boolean;
+  concurrencyOptions?: ConcurrencyOptions;
+}
 
 /**
  * PDF Worker Pool manages a collection of worker threads for PDF processing
@@ -85,12 +97,62 @@ export class PDFWorkerPool {
   private coordinatorHandlers: Map<Worker, EventListener> = new Map();
   private coordinatorStatusInterval: NodeJS.Timeout | null = null;
 
-  private constructor(
-    maxWorkers = MAX_WORKERS,
-    coordinatorCount = COORDINATOR_COUNT
-  ) {
-    this.maxWorkers = maxWorkers;
-    this.coordinatorCount = coordinatorCount;
+  private usedOptimalConcurrency: boolean = false;
+
+  private constructor(options: WorkerPoolOptions = {}) {
+    const {
+      maxWorkers: initialMaxWorkers = MAX_WORKERS,
+      coordinatorCount: initialCoordinatorCount = COORDINATOR_COUNT,
+      detectOptimalConcurrency = true,
+      concurrencyOptions = {},
+    } = options;
+
+    if (detectOptimalConcurrency && isBrowserWithWorker()) {
+      try {
+        const concurrencyConfig = createConcurrencyConfig({
+          customConcurrency:
+            options.maxWorkers !== undefined &&
+            options.maxWorkers !== MAX_WORKERS
+              ? options.maxWorkers
+              : undefined,
+          ...concurrencyOptions,
+        });
+
+        this.maxWorkers = concurrencyConfig.maxConcurrentFiles;
+        this.usedOptimalConcurrency = concurrencyConfig.usedOptimalDetection;
+
+        // Scale coordinators with worker count but keep it reasonable
+        // This ensures we have enough coordinators for the workers without excessive overhead
+        if (
+          this.usedOptimalConcurrency &&
+          options.coordinatorCount === undefined
+        ) {
+          this.coordinatorCount = calculateOptimalCoordinatorCount(
+            this.maxWorkers
+          );
+        } else {
+          this.coordinatorCount = initialCoordinatorCount;
+        }
+
+        if (this.usedOptimalConcurrency) {
+          logger.log(
+            `WorkerPool configured with ${this.maxWorkers} workers and ${this.coordinatorCount} coordinators based on system capabilities`
+          );
+        }
+      } catch (error) {
+        // Fallback to defaults if detection fails
+        logger.warn(
+          "Failed to detect optimal worker pool settings, using default",
+          error
+        );
+        this.maxWorkers = initialMaxWorkers;
+        this.coordinatorCount = initialCoordinatorCount;
+      }
+    } else {
+      // Use the provided values
+      this.maxWorkers = initialMaxWorkers;
+      this.coordinatorCount = initialCoordinatorCount;
+    }
 
     // Initialize the shared library worker if not already done
     if (isBrowserWithWorker() && !sharedLibraryWorker) {
@@ -98,6 +160,25 @@ export class PDFWorkerPool {
         new URL("./pdf-library.worker.ts", import.meta.url)
       );
     }
+  }
+
+  /**
+   * Get the worker pool configuration including concurrency settings
+   */
+  public getPoolConfiguration(): {
+    maxWorkers: number;
+    coordinatorCount: number;
+    usedOptimalDetection: boolean;
+    activeWorkers: number;
+    availableWorkers: number;
+  } {
+    return {
+      maxWorkers: this.maxWorkers,
+      coordinatorCount: this.coordinatorCount,
+      usedOptimalDetection: this.usedOptimalConcurrency,
+      activeWorkers: this.workers.length,
+      availableWorkers: this.availableWorkers.length,
+    };
   }
 
   /**
@@ -553,8 +634,7 @@ export class PDFWorkerPool {
    * ensuring it's properly initialized before returning
    */
   public static async getInstance(
-    maxWorkers = MAX_WORKERS,
-    coordinatorCount = COORDINATOR_COUNT
+    options: WorkerPoolOptions = {}
   ): Promise<PDFWorkerPool> {
     if (PDFWorkerPool.instance) {
       if (!PDFWorkerPool.instance.isInitialized) {
@@ -563,7 +643,7 @@ export class PDFWorkerPool {
       return PDFWorkerPool.instance;
     }
 
-    const instance = new PDFWorkerPool(maxWorkers, coordinatorCount);
+    const instance = new PDFWorkerPool(options);
     PDFWorkerPool.instance = instance;
     await instance.initialize();
     return instance;
@@ -575,11 +655,10 @@ export class PDFWorkerPool {
    * or when it's known that the instance is already initialized
    */
   public static getInstanceSync(
-    maxWorkers = MAX_WORKERS,
-    coordinatorCount = COORDINATOR_COUNT
+    options: WorkerPoolOptions = {}
   ): PDFWorkerPool {
     if (!PDFWorkerPool.instance) {
-      PDFWorkerPool.instance = new PDFWorkerPool(maxWorkers, coordinatorCount);
+      PDFWorkerPool.instance = new PDFWorkerPool(options);
 
       if (isBrowserWithWorker()) {
         void PDFWorkerPool.instance.initialize();
