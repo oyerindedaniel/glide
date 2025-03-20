@@ -109,3 +109,21 @@ export function throttle<T extends (...args: any[]) => void>(
     }
   };
 }
+
+/**
+ * Calculates an exponential backoff delay.
+ *
+ * @param {number} baseDelay - The base delay in milliseconds.
+ * @param {number} attempt - The current retry attempt (starting from 1).
+ * @returns {number} The computed delay in milliseconds.
+ */
+export function getExponentialBackoffDelay(
+  baseDelay: number,
+  attempt: number
+): number {
+  if (attempt < 1) {
+    throw new Error("Attempt number must be at least 1.");
+  }
+
+  return baseDelay * Math.pow(2, attempt - 1);
+}

@@ -1156,11 +1156,7 @@ export class PDFBatchProcessor {
         url: string | null,
         status: ProcessingStatus
       ) => void;
-      displayInfo: {
-        devicePixelRatio: number;
-        containerWidth: number;
-        containerHeight?: number;
-      };
+      displayInfo: DisplayInfo;
     },
     abortSignal: AbortSignal
   ): Promise<void> {
@@ -1202,8 +1198,8 @@ export class PDFBatchProcessor {
         const result = createTimeoutPromise(
           file.name,
           file.size,
-          abortSignal,
-          processorClientId
+          processorClientId,
+          abortSignal
         );
 
         const timeoutPromise = result.timeoutPromise;
@@ -1358,11 +1354,7 @@ export class PDFBatchProcessor {
         url: string | null,
         status: ProcessingStatus
       ) => void;
-      displayInfo?: {
-        devicePixelRatio: number;
-        containerWidth: number;
-        containerHeight?: number;
-      };
+      displayInfo?: DisplayInfo;
     },
     abortSignal: AbortSignal,
     failedPages: Map<string, { pageNumber: number; attempts: number }[]>
@@ -1523,15 +1515,15 @@ async function monitorProcessingTimeout(
  * Create a timeout promise that monitors processing activity
  * @param fileName Name of the file being processed
  * @param fileSize Size of the file in bytes
+ * @param processorClientId Client ID for tracking (required)
  * @param abortSignal Optional abort signal to connect UI abort actions
- * @param processorClientId Optional processor client ID for tracking
  * @returns Promise and resolve function
  */
 function createTimeoutPromise(
   fileName: string,
   fileSize: number,
-  abortSignal?: AbortSignal,
-  processorClientId?: string
+  processorClientId: string,
+  abortSignal?: AbortSignal
 ): { timeoutPromise: Promise<void>; resolveTimeout: () => void } {
   // TODO: move to config/env
   const MAX_TIMEOUT = 300000; // 5 minutes absolute maximum

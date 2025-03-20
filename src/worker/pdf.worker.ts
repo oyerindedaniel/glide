@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   WorkerMessageType,
   LibraryWorkerMessageType,
@@ -8,8 +6,13 @@ import {
   InitPDFMessage,
   ProcessPageMessage,
   ErrorMessage,
+  WorkerMessage,
+  CleanupOptions,
 } from "@/types/processor";
-import { CoordinatorMessageType } from "@/types/coordinator";
+import {
+  CoordinatorMessageType,
+  CleanupMessage as CoordinatorCleanupMessage,
+} from "@/types/coordinator";
 import { v4 as uuidv4 } from "uuid";
 import logger from "@/utils/logger";
 import { generateRandomId, isBrowserWithWorker } from "@/utils/app";
@@ -27,11 +30,12 @@ let assignedCoordinatorIndex = -1;
 let coordinatorPort: MessagePort | null = null;
 
 // Worker heartbeat to indicate processing activity
-let heartbeatInterval: any = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
 
-function startHeartbeat() {
+function startHeartbeat(): void {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 
   heartbeatInterval = setInterval(() => {
@@ -58,14 +62,12 @@ self.addEventListener(
         `[${workerId}] Worker assigned to coordinator ${assignedCoordinatorIndex}`
       );
 
-      // Access port sent from worker pool
       if (e.ports && e.ports.length > 0) {
         coordinatorPort = e.ports[0];
 
         // Set up message handler for the coordinator port
         coordinatorPort.onmessage = handleCoordinatorMessage;
 
-        // Start the port to receive messages
         coordinatorPort.start();
 
         logger.log(
@@ -85,7 +87,7 @@ self.addEventListener(
 );
 
 // Handle messages from the coordinator
-function handleCoordinatorMessage(e: MessageEvent) {
+function handleCoordinatorMessage(e: MessageEvent<WorkerMessage>): void {
   // Process the response from the coordinator/library
   const { type, clientId } = e.data;
 
@@ -100,7 +102,15 @@ function handleCoordinatorMessage(e: MessageEvent) {
 }
 
 // Function to send messages to the coordinator
-function sendToCoordinator(message: any, transfer: Transferable[] = []) {
+function sendToCoordinator(
+  message: {
+    type: WorkerMessageType | LibraryWorkerMessageType;
+    clientId: string;
+    requestId?: string;
+    [key: string]: unknown;
+  },
+  transfer: Transferable[] = []
+): boolean {
   if (!coordinatorPort) {
     logger.error(
       `[${workerId}] No coordinator port available, cannot send message`
@@ -172,15 +182,123 @@ if (isBrowserWithWorker() && typeof self !== "undefined") {
           }
 
           if (coordinatorPort) {
+            // Choose the appropriate library worker message type based on the incoming message
+            const libraryMsgType =
+              type === WorkerMessageType.AbortProcessing
+                ? LibraryWorkerMessageType.AbortProcessing
+                : LibraryWorkerMessageType.CleanupDocument;
+
             sendToCoordinator({
-              type:
-                type === WorkerMessageType.Cleanup
-                  ? LibraryWorkerMessageType.CleanupDocument
-                  : LibraryWorkerMessageType.AbortProcessing,
+              type: libraryMsgType,
               clientId: data.clientId || WORKER_FALLBACK_ID,
               requestId: uuidv4(),
             });
           }
+          break;
+        }
+
+        // Special case for coordinator-initiated full cleanup
+        case CoordinatorMessageType.CLEANUP: {
+          const cleanupMessage = data as CoordinatorCleanupMessage;
+          const cleanupOptions =
+            cleanupMessage.options || ({} as CleanupOptions);
+          const clientIdToClean = cleanupMessage.clientId;
+          const responseRequired = cleanupMessage.responseRequired !== false; // Default to true
+          const cleanupRequestId = cleanupMessage.requestId || "";
+          const ports = e.ports;
+
+          logger.log(
+            `[${workerId}] Received cleanup request${
+              clientIdToClean
+                ? ` for client ${clientIdToClean}`
+                : " for worker termination"
+            }`
+          );
+
+          // Clear heartbeat immediately in all cases
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+
+          const shouldCloseChannels = cleanupOptions.closeChannels !== false; // Default to true
+
+          // Client-specific cleanup
+          if (clientIdToClean) {
+            logger.log(
+              `[${workerId}] Performing client-specific cleanup for: ${clientIdToClean}`
+            );
+
+            // Send success response
+            if (responseRequired) {
+              const responseMessage = {
+                type: CoordinatorMessageType.CLEANUP,
+                clientId: clientIdToClean,
+                requestId: cleanupRequestId,
+                success: true,
+                isWorkerCleanupResponse: true,
+              };
+
+              // If we have a port to respond to
+              if (ports && ports.length > 0) {
+                const responsePort = ports[0];
+                responsePort.postMessage(responseMessage);
+                logger.log(
+                  `[${workerId}] Sent cleanup response via port for client ${clientIdToClean}`
+                );
+              } else {
+                // Respond via main thread
+                self.postMessage(responseMessage);
+                logger.log(
+                  `[${workerId}] Sent cleanup response via self.postMessage for client ${clientIdToClean}`
+                );
+              }
+            }
+          }
+          // Full worker cleanup
+          else {
+            logger.log(`[${workerId}] Performing full worker cleanup`);
+
+            // Close coordinator port if requested
+            if (shouldCloseChannels && coordinatorPort) {
+              try {
+                logger.log(`[${workerId}] Closing coordinator port`);
+                coordinatorPort.close();
+                coordinatorPort = null;
+                assignedCoordinatorIndex = -1;
+              } catch (error) {
+                logger.error(
+                  `[${workerId}] Error closing coordinator port:`,
+                  error
+                );
+              }
+            }
+
+            // Send the success response
+            const responseMessage = {
+              type: CoordinatorMessageType.CLEANUP,
+              requestId: cleanupRequestId,
+              success: true,
+              isWorkerCleanupResponse: true,
+            };
+
+            // If we have a port to respond to
+            if (ports && ports.length > 0) {
+              const responsePort = ports[0];
+              responsePort.postMessage(responseMessage);
+              logger.log(
+                `[${workerId}] Sent worker termination response via port`
+              );
+            } else {
+              // Respond via main thread
+              self.postMessage(responseMessage);
+              logger.log(
+                `[${workerId}] Sent worker termination response via self.postMessage`
+              );
+            }
+          }
+
+          logger.log(`[${workerId}] Worker cleanup process completed`);
           break;
         }
 
@@ -191,6 +309,7 @@ if (isBrowserWithWorker() && typeof self !== "undefined") {
       logger.error(`[${workerId}] Error processing message:`, error);
       const errorMessage: ErrorMessage = {
         type: WorkerMessageType.Error,
+        clientId: data?.clientId || WORKER_FALLBACK_ID,
         error: error instanceof Error ? error.message : String(error),
       };
       self.postMessage(errorMessage);

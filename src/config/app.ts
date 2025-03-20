@@ -1,6 +1,6 @@
 const SCALE_CACHE_SIZE = process.env.SCALE_CACHE_SIZE
   ? parseInt(process.env.SCALE_CACHE_SIZE)
-  : 1000;
+  : 1000; // Max entries per client in PDF library worker scale cache
 
 const isProduction = process.env.NODE_ENV === "production";
 

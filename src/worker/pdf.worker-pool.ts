@@ -1,6 +1,6 @@
 import {
   WorkerMessageType,
-  CleanupMessage,
+  CleanupMessage as WorkerCleanupMessage,
   PDFInitializedMessage,
   WorkerMessage,
   PageProcessedMessage,
@@ -10,14 +10,16 @@ import {
   RecoveryDataForType,
   CoordinatorFallbackMessage,
   isCoordinatorFallbackMessage,
+  CleanupOptions,
+  CleanupResponse,
 } from "@/types/processor";
 import {
   CoordinatorMessageType,
-  RegisterCoordinatorMessage,
   AssignCoordinatorMessage,
   InitCoordinatorMessage,
   RegisterWorkerMessage,
   CoordinatorStatusMessage,
+  CleanupMessage as CoordinatorCleanupMessage,
 } from "@/types/coordinator";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -56,7 +58,7 @@ export class PDFWorkerPool {
   private workers: Worker[] = [];
   private workerCoordinatorChannels: MessageChannel[] = [];
   private availableWorkers: Worker[] = [];
-  private coordinators: Worker[] = [];
+  private coordinators: MessagePort[] = [];
   private coordinatorChannels: MessageChannel[] = [];
   private nextCoordinatorIndex = 0;
   private taskQueue: Array<{
@@ -68,7 +70,7 @@ export class PDFWorkerPool {
   private coordinatorCount: number;
   private static instance: PDFWorkerPool;
   public isInitialized = false;
-  private activeClients = new Set<string>();
+  private activeClients: Set<string> = new Set();
   private workerHandlers = new Map<
     Worker,
     (e: MessageEvent<WorkerMessage>) => void
@@ -78,6 +80,9 @@ export class PDFWorkerPool {
   private orphanedResults = new Map<string, WorkerMessage>();
 
   private terminationTimeouts: NodeJS.Timeout[] = [];
+
+  private coordinatorHandlers: Map<MessagePort, EventListener> = new Map();
+  private coordinatorStatusInterval: NodeJS.Timeout | null = null;
 
   private constructor(
     maxWorkers = MAX_WORKERS,
@@ -111,37 +116,25 @@ export class PDFWorkerPool {
 
     // Create coordinator workers
     for (let i = 0; i < this.coordinatorCount; i++) {
-      const coordinator = new Worker(
-        new URL("./pdf-coordinator.worker.ts", import.meta.url)
-      );
-
-      // Set up event listener for fallback messages from coordinator
-      coordinator.addEventListener(
-        "message",
-        this.handleCoordinatorFallbackMessage.bind(this)
-      );
-
-      // Create a message channel for this coordinator
-      const channel = new MessageChannel();
-
-      // Set up communication between library worker and coordinator
-      const registerMessage: RegisterCoordinatorMessage = {
-        type: CoordinatorMessageType.REGISTER_COORDINATOR,
-        coordinatorId: i,
-      };
-
-      sharedLibraryWorker.postMessage(registerMessage, [channel.port1]);
-
-      // Initialize the coordinator with its port and ID
+      const coordinator = new MessageChannel().port1;
       const initMessage: InitCoordinatorMessage = {
         type: CoordinatorMessageType.INIT_COORDINATOR,
         coordinatorId: i,
       };
 
-      coordinator.postMessage(initMessage, [channel.port2]);
+      const fallbackHandler = ((
+        e: MessageEvent<CoordinatorFallbackMessage>
+      ) => {
+        this.handleCoordinatorFallbackMessage(e);
+      }) as EventListener;
+
+      coordinator.addEventListener("message", fallbackHandler);
+      this.coordinatorHandlers.set(coordinator, fallbackHandler);
+
+      coordinator.start();
+      coordinator.postMessage(initMessage);
 
       this.coordinators.push(coordinator);
-      this.coordinatorChannels.push(channel);
     }
 
     // Wait for all coordinators to be ready
@@ -149,7 +142,9 @@ export class PDFWorkerPool {
       this.coordinators.map(
         (coordinator, index) =>
           new Promise<void>((resolve) => {
-            const handler = (e: MessageEvent) => {
+            const handler = (
+              e: MessageEvent<{ type: string; coordinatorId: number }>
+            ) => {
               const data = e.data;
 
               if (
@@ -167,13 +162,33 @@ export class PDFWorkerPool {
 
     logger.log(`All ${this.coordinatorCount} coordinators initialized`);
     this.isInitialized = true;
+
+    if (this.coordinatorStatusInterval) {
+      clearInterval(this.coordinatorStatusInterval);
+      this.coordinatorStatusInterval = null;
+    }
+
+    this.coordinatorStatusInterval = setInterval(() => {
+      this.coordinators.forEach((coordinator, index) => {
+        try {
+          const statusMessage = {
+            type: CoordinatorMessageType.COORDINATOR_STATUS,
+          };
+          coordinator.postMessage(statusMessage);
+        } catch (err) {
+          logger.error(`Error sending heartbeat to coordinator ${index}:`, err);
+        }
+      });
+    }, 30000) as NodeJS.Timeout;
   }
 
   /**
    * Handle fallback messages from coordinators when they can't find a worker recipient
    * @param event The message event from the coordinator
    */
-  private handleCoordinatorFallbackMessage(event: MessageEvent) {
+  private handleCoordinatorFallbackMessage(
+    event: MessageEvent<WorkerMessage>
+  ): void {
     // Check if this is actually a coordinator fallback message
     if (!isCoordinatorFallbackMessage(event.data)) {
       return;
@@ -206,7 +221,7 @@ export class PDFWorkerPool {
 
       case WorkerMessageType.Cleanup:
         this.handleOrphanedCleanup(
-          data as CoordinatorFallbackMessage<CleanupMessage>
+          data as CoordinatorFallbackMessage<WorkerCleanupMessage>
         );
         break;
 
@@ -333,7 +348,7 @@ export class PDFWorkerPool {
    * Handle orphaned Cleanup messages
    */
   private handleOrphanedCleanup(
-    data: CoordinatorFallbackMessage<CleanupMessage>
+    data: CoordinatorFallbackMessage<WorkerCleanupMessage>
   ): void {
     if (!data.clientId) {
       logger.warn(
@@ -622,7 +637,7 @@ export class PDFWorkerPool {
           data.type === WorkerMessageType.Cleanup ||
           data.type === WorkerMessageType.AbortProcessing
         ) {
-          const cleanupMessage = data as CleanupMessage;
+          const cleanupMessage = data as WorkerCleanupMessage;
           if (cleanupMessage.clientId) {
             logger.log(
               `Worker sent cleanup for client ${cleanupMessage.clientId}`
@@ -682,7 +697,7 @@ export class PDFWorkerPool {
   /**
    * Get the coordinator worker by index
    */
-  public getCoordinatorWorker(index: number): Worker | null {
+  public getCoordinatorWorker(index: number): MessagePort | null {
     if (index < 0 || index >= this.coordinators.length) {
       return null;
     }
@@ -692,7 +707,7 @@ export class PDFWorkerPool {
   /**
    * Get the next available coordinator worker in round-robin fashion
    */
-  public getNextCoordinatorWorker(): Worker | null {
+  public getNextCoordinatorWorker(): MessagePort | null {
     if (this.coordinators.length === 0) return null;
 
     const coordinator = this.coordinators[this.nextCoordinatorIndex];
@@ -756,7 +771,9 @@ export class PDFWorkerPool {
       const channel = new MessageChannel();
 
       // Set up the listener for the response
-      channel.port1.onmessage = (event) => {
+      channel.port1.onmessage = (
+        event: MessageEvent<CoordinatorStatusMessage>
+      ) => {
         const data = event.data;
         if (data.type === CoordinatorMessageType.COORDINATOR_STATUS) {
           channel.port1.close();
@@ -784,36 +801,238 @@ export class PDFWorkerPool {
   /**
    * Clean up resources for a specific client
    * @param clientId The client ID to clean up
-   * @returns Promise that resolves when cleanup is complete
+   * @param options Additional cleanup options
+   * @returns Promise that resolves when cleanup is complete or timeout occurs
    */
-  public async cleanupClient(clientId: string): Promise<boolean> {
+  public async cleanupClient(
+    clientId: string,
+    options: CleanupOptions & {
+      targetWorkers?: Worker[]; // Specific workers to send cleanup to (default: all)
+      targetCoordinators?: number[]; // Specific coordinator indices to clean (default: all)
+      timeout?: number; // Timeout for cleanup operation in ms
+      skipResponseCheck?: boolean; // Skip waiting for responses (fire and forget)
+    } = {}
+  ): Promise<CleanupResponse> {
     if (!isBrowserWithWorker() || !clientId) {
-      return false;
+      return {
+        success: false,
+        workerResponses: 0,
+        coordinatorResponses: 0,
+        timedOut: false,
+      } satisfies CleanupResponse;
     }
 
-    if (!this.activeClients.has(clientId)) {
-      logger.log(
-        `Client ${clientId} not found in active clients, skipping cleanup`
-      );
-      return true;
+    const {
+      force = false,
+      silent = false,
+      targetWorkers,
+      targetCoordinators,
+      timeout = 500,
+      skipResponseCheck = false,
+      delayRequestRemoval = false,
+      requestRemovalDelay = 5000,
+      closeChannels = false,
+    } = options;
+
+    if (!this.activeClients.has(clientId) && !force) {
+      if (!silent) {
+        logger.log(
+          `Client ${clientId} not found in active clients, skipping cleanup`
+        );
+      }
+      return {
+        success: true,
+        workerResponses: 0,
+        coordinatorResponses: 0,
+        timedOut: false,
+      } satisfies CleanupResponse;
     }
 
-    logger.log(`Cleaning up resources for client: ${clientId}`);
+    if (!silent) {
+      logger.log(`Cleaning up resources for client: ${clientId}`);
+    }
+
+    // Mark client as inactive immediately
     this.activeClients.delete(clientId);
 
-    // Create a cleanup message
-    const cleanupMessage = {
-      type: CoordinatorMessageType.CLEANUP_CLIENT,
-      clientId: clientId,
-      requestId: uuidv4(),
+    // Create a cleanup request ID for tracking responses
+    const cleanupRequestId = uuidv4();
+
+    // Create a message channel for response listening
+    const responseChannel = new MessageChannel();
+    const responsePort = responseChannel.port1;
+
+    let workerResponses = 0;
+    let coordinatorResponses = 0;
+
+    // Start response listener if we're not skipping response checks
+    const responsePromise = !skipResponseCheck
+      ? new Promise<{
+          workerResponses: number;
+          coordinatorResponses: number;
+          timedOut: boolean;
+        }>((resolve) => {
+          let timeoutId: NodeJS.Timeout | null = null;
+
+          // Set up response listener
+          responsePort.onmessage = (event) => {
+            const data = event.data;
+
+            if (
+              data.type === CoordinatorMessageType.CLEANUP &&
+              data.requestId === cleanupRequestId
+            ) {
+              if (data.isWorkerCleanupResponse) {
+                workerResponses++;
+                if (!silent) {
+                  logger.log(
+                    `Received worker cleanup response for client ${clientId} (${workerResponses} total)`
+                  );
+                }
+              } else {
+                coordinatorResponses++;
+                if (!silent) {
+                  logger.log(
+                    `Received coordinator cleanup response for client ${clientId} (${coordinatorResponses} total)`
+                  );
+                }
+              }
+
+              // Check if we've received all expected responses
+              const workersToCheck = targetWorkers
+                ? targetWorkers.length
+                : this.workers.length;
+              const coordinatorsToCheck = targetCoordinators
+                ? targetCoordinators.length
+                : this.coordinators.length;
+
+              if (
+                workerResponses >= workersToCheck &&
+                coordinatorResponses >= coordinatorsToCheck
+              ) {
+                // We got all responses, clean up and resolve
+                if (timeoutId) {
+                  clearTimeout(timeoutId);
+                }
+
+                responsePort.close();
+                resolve({
+                  workerResponses,
+                  coordinatorResponses,
+                  timedOut: false,
+                });
+              }
+            }
+          };
+
+          responsePort.start();
+
+          // Set timeout for response waiting
+          timeoutId = setTimeout(() => {
+            if (!silent) {
+              logger.warn(
+                `Cleanup operation for client ${clientId} timed out after ${timeout}ms`
+              );
+            }
+
+            responsePort.close();
+            resolve({ workerResponses, coordinatorResponses, timedOut: true });
+          }, timeout);
+        })
+      : Promise.resolve({
+          workerResponses: 0,
+          coordinatorResponses: 0,
+          timedOut: false,
+        });
+
+    // Create cleanup options
+    const cleanupOptions = {
+      force,
+      silent,
+      delayRequestRemoval,
+      requestRemovalDelay,
+      closeChannels,
     };
 
-    // Send cleanup messages to all coordinators directly
-    for (const coordinator of this.coordinators) {
+    // Create a specialized cleanup message for coordinators
+    const cleanupMessage: CoordinatorCleanupMessage = {
+      type: CoordinatorMessageType.CLEANUP,
+      clientId: clientId,
+      requestId: cleanupRequestId,
+      options: cleanupOptions,
+      responseRequired: !skipResponseCheck,
+    };
+
+    // Determine which workers to send cleanup to
+    const workersToClean = targetWorkers || this.workers;
+
+    // Send cleanup to selected workers
+    for (const worker of workersToClean) {
       try {
-        coordinator.postMessage(cleanupMessage);
+        if (skipResponseCheck) {
+          // Simple fire-and-forget
+          worker.postMessage(cleanupMessage);
+        } else {
+          // Create a new channel for each worker since we can't clone MessagePorts
+          const workerChannel = new MessageChannel();
+
+          // Connect the worker's response port to our listener
+          workerChannel.port1.onmessage = (event) => {
+            responsePort.postMessage(event.data);
+          };
+          workerChannel.port1.start();
+
+          // Send the cleanup with worker's port
+          worker.postMessage(cleanupMessage, [workerChannel.port2]);
+        }
+
+        if (!silent) {
+          logger.log(`Sent cleanup message to worker for client ${clientId}`);
+        }
       } catch (error) {
-        logger.warn(`Error sending cleanup message to coordinator:`, error);
+        logger.warn(`Error sending cleanup message to worker:`, error);
+      }
+    }
+
+    // Determine which coordinators to clean
+    const coordinatorIndices =
+      targetCoordinators ||
+      Array.from({ length: this.coordinators.length }, (_, i) => i);
+
+    // Send cleanup to selected coordinators
+    for (const index of coordinatorIndices) {
+      if (index < 0 || index >= this.coordinators.length) continue;
+
+      try {
+        const coordinator = this.coordinators[index];
+
+        if (skipResponseCheck) {
+          // Simple fire-and-forget
+          coordinator.postMessage(cleanupMessage);
+        } else {
+          // Create a new channel for each coordinator
+          const coordinatorChannel = new MessageChannel();
+
+          // Connect the coordinator's response port to our listener
+          coordinatorChannel.port1.onmessage = (event) => {
+            responsePort.postMessage(event.data);
+          };
+          coordinatorChannel.port1.start();
+
+          // Send the cleanup with coordinator's port
+          coordinator.postMessage(cleanupMessage, [coordinatorChannel.port2]);
+        }
+
+        if (!silent) {
+          logger.log(
+            `Sent cleanup message to coordinator ${index} for client ${clientId}`
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          `Error sending cleanup message to coordinator ${index}:`,
+          error
+        );
       }
     }
 
@@ -826,13 +1045,31 @@ export class PDFWorkerPool {
     }
 
     keysToDelete.forEach((key) => this.orphanedResults.delete(key));
-    if (keysToDelete.length > 0) {
+
+    if (!silent && keysToDelete.length > 0) {
       logger.log(
         `Cleaned up ${keysToDelete.length} orphaned results for client ${clientId}`
       );
     }
 
-    return true;
+    // Wait for responses if we're tracking them
+    if (!skipResponseCheck) {
+      const results = await responsePromise;
+      return {
+        success:
+          !results.timedOut ||
+          results.workerResponses > 0 ||
+          results.coordinatorResponses > 0,
+        ...results,
+      } satisfies CleanupResponse;
+    }
+
+    return {
+      success: true,
+      workerResponses: 0,
+      coordinatorResponses: 0,
+      timedOut: false,
+    } satisfies CleanupResponse;
   }
 
   /**
@@ -899,48 +1136,19 @@ export class PDFWorkerPool {
   public terminateAll() {
     if (!isBrowserWithWorker()) return;
 
-    // Clear any existing termination timeouts first
-    this.clearTerminationTimeouts();
-
     // Set a flag to prevent new initializations during cleanup
     this.isInitialized = false;
 
-    // Clear active clients tracking
-    logger.log(`Cleaning up ${this.activeClients.size} active clients`);
-    this.activeClients.clear();
+    // Clear any existing termination timeouts first (from previous incomplete terminations)
+    this.clearTerminationTimeouts();
 
-    // First terminate the coordinator workers
-    for (const coordinator of this.coordinators) {
-      try {
-        // Send a properly typed coordinator cleanup message
-        const cleanupMessage = {
-          type: CoordinatorMessageType.CLEANUP,
-        };
-        coordinator.postMessage(cleanupMessage);
+    logger.log("Starting termination of all PDF workers and coordinators...");
 
-        // Remove message event listeners to prevent memory leaks
-        coordinator.removeEventListener(
-          "message",
-          this.handleCoordinatorFallbackMessage
-        );
+    // Track which workers have sent cleanup responses
+    const workerCleanupResponses = new Set<Worker>();
+    const coordinatorCleanupResponses = new Set<number>();
 
-        // Add a small delay before termination to allow postMessage to complete
-        const timeoutId = setTimeout(() => {
-          try {
-            coordinator.terminate();
-          } catch (err) {
-            logger.warn("Error terminating coordinator worker", err);
-          }
-        }, 200);
-
-        // Track the timeout for cleanup
-        this.terminationTimeouts.push(timeoutId);
-      } catch (error) {
-        logger.warn("Error cleaning up coordinator worker", error);
-      }
-    }
-
-    // Then terminate the processing workers
+    // First send cleanup messages to the processing workers
     for (const worker of this.workers) {
       try {
         // Remove client tracking event listener
@@ -951,19 +1159,53 @@ export class PDFWorkerPool {
           this.workerHandlers.delete(worker);
         }
 
-        const cleanupMessage: CleanupMessage = {
-          type: WorkerMessageType.Cleanup,
-        };
-        worker.postMessage(cleanupMessage);
-
-        // Terminate with delay to ensure cleanup message is processed
-        const timeoutId = setTimeout(() => {
-          try {
-            worker.terminate();
-          } catch (err) {
-            logger.warn("Error terminating worker", err);
+        // Set up a one-time listener for cleanup completion
+        const workerCleanupListener = (event: MessageEvent) => {
+          const data = event.data;
+          if (
+            data.type === CoordinatorMessageType.CLEANUP &&
+            data.isWorkerCleanupResponse
+          ) {
+            logger.log(`Worker cleanup response received, terminating worker`);
+            workerCleanupResponses.add(worker);
+            try {
+              worker.removeEventListener("message", workerCleanupListener);
+              worker.terminate();
+            } catch (error) {
+              logger.warn("Error terminating worker after cleanup", error);
+            }
           }
-        }, 200);
+        };
+
+        // Add the listener
+        worker.addEventListener("message", workerCleanupListener);
+
+        // Send special cleanup message
+        const workerCleanupMessage: CoordinatorCleanupMessage = {
+          type: CoordinatorMessageType.CLEANUP,
+          options: {
+            closeChannels: true,
+            force: true,
+          },
+          responseRequired: true,
+          requestId: uuidv4(),
+        };
+        worker.postMessage(workerCleanupMessage);
+
+        // Set a timeout to terminate the worker even if no response is received
+        const timeoutId = setTimeout(() => {
+          if (!workerCleanupResponses.has(worker)) {
+            try {
+              logger.warn(
+                "No cleanup response from worker, forcing termination"
+              );
+              worker.removeEventListener("message", workerCleanupListener);
+              worker.terminate();
+            } catch (err) {
+              logger.warn("Error terminating worker during timeout", err);
+            }
+          }
+        }, 300);
 
         // Track the timeout for cleanup
         this.terminationTimeouts.push(timeoutId);
@@ -972,82 +1214,168 @@ export class PDFWorkerPool {
       }
     }
 
-    // Properly close all message channels before clearing them
-    logger.log("Closing all communication channels...");
-
-    // Close coordinator channels
-    this.coordinatorChannels.forEach((channel, index) => {
+    // Then send cleanup messages to all coordinators
+    for (const [index, coordinator] of this.coordinators.entries()) {
       try {
-        // Close any ports that haven't been transferred
-        if (channel.port1) {
-          logger.log(`Closing coordinator channel ${index} port1`);
-          channel.port1.close();
-        }
-        if (channel.port2) {
-          logger.log(`Closing coordinator channel ${index} port2`);
-          channel.port2.close();
-        }
-      } catch (error) {
-        logger.warn(`Error closing coordinator channel ${index}:`, error);
-      }
-    });
+        // Set up a one-time listener for coordinator cleanup completion
+        const coordinatorCleanupListener = (event: MessageEvent) => {
+          const data = event.data;
+          if (data.type === CoordinatorMessageType.CLEANUP && data.success) {
+            logger.log(`Coordinator ${index} cleanup response received`);
+            coordinatorCleanupResponses.add(index);
 
-    // Close worker-coordinator channels
-    this.workerCoordinatorChannels.forEach((channel, index) => {
-      try {
-        // Close any ports that haven't been transferred
-        if (channel.port1) {
-          logger.log(`Closing worker-coordinator channel ${index} port1`);
-          channel.port1.close();
-        }
-        if (channel.port2) {
-          logger.log(`Closing worker-coordinator channel ${index} port2`);
-          channel.port2.close();
-        }
-      } catch (error) {
-        logger.warn(
-          `Error closing worker-coordinator channel ${index}:`,
-          error
-        );
-      }
-    });
-
-    // Clear internal structures
-    this.workers = [];
-    this.availableWorkers = [];
-    this.coordinators = [];
-    this.coordinatorChannels = [];
-    this.workerCoordinatorChannels = [];
-    this.taskQueue = [];
-
-    // Clear orphaned results
-    this.orphanedResults.clear();
-
-    // Finally, terminate the shared library worker
-    if (sharedLibraryWorker) {
-      try {
-        const timeoutId = setTimeout(() => {
-          try {
-            sharedLibraryWorker!.terminate();
-            sharedLibraryWorker = null;
-            logger.log("Shared library worker terminated successfully");
-          } catch (error) {
-            logger.warn("Error terminating shared library worker", error);
+            try {
+              coordinator.removeEventListener(
+                "message",
+                coordinatorCleanupListener
+              );
+              coordinator.close();
+            } catch (error) {
+              logger.warn(
+                `Error closing coordinator ${index} after cleanup`,
+                error
+              );
+            }
           }
-        }, 200);
+        };
+
+        // Add the listener
+        coordinator.addEventListener("message", coordinatorCleanupListener);
+
+        // Create a message channel for the response (optional, can be removed if coordinators respond via postMessage)
+        const coordinatorCleanupMessage: CoordinatorCleanupMessage = {
+          type: CoordinatorMessageType.CLEANUP,
+          options: {
+            force: true, // Force cleanup even if clients not found
+            silent: false, // Log cleanup operations
+            closeChannels: true, // Close all channel references
+            delayRequestRemoval: false, // Immediate cleanup
+          },
+          responseRequired: true,
+          requestId: uuidv4(),
+        };
+        coordinator.postMessage(coordinatorCleanupMessage);
+
+        // Remove existing message event listeners
+        const handler = this.coordinatorHandlers.get(coordinator);
+        if (handler) {
+          coordinator.removeEventListener("message", handler);
+          this.coordinatorHandlers.delete(coordinator);
+        }
+
+        // Set a timeout to force close the coordinator if no response is received
+        const timeoutId = setTimeout(() => {
+          if (!coordinatorCleanupResponses.has(index)) {
+            try {
+              logger.warn(
+                `No cleanup response from coordinator ${index}, forcing close`
+              );
+              coordinator.removeEventListener(
+                "message",
+                coordinatorCleanupListener
+              );
+              coordinator.close();
+            } catch (err) {
+              logger.warn(
+                `Error closing coordinator ${index} during timeout`,
+                err
+              );
+            }
+          }
+        }, 500);
 
         // Track the timeout for cleanup
         this.terminationTimeouts.push(timeoutId);
       } catch (error) {
-        logger.warn(
-          "Error setting up shared library worker termination",
-          error
-        );
+        logger.warn(`Error during coordinator ${index} cleanup`, error);
       }
     }
+
+    // Similarly handle the shared library worker
+    if (sharedLibraryWorker) {
+      try {
+        const libraryCleanupListener = (event: MessageEvent) => {
+          const data = event.data;
+          if (
+            data.type === CoordinatorMessageType.CLEANUP &&
+            data.isLibraryWorkerResponse
+          ) {
+            logger.log("Library worker cleanup completed, terminating worker");
+            try {
+              sharedLibraryWorker!.removeEventListener(
+                "message",
+                libraryCleanupListener
+              );
+              sharedLibraryWorker!.terminate();
+              sharedLibraryWorker = null;
+            } catch (error) {
+              logger.warn("Error terminating shared library worker", error);
+            }
+          }
+        };
+
+        sharedLibraryWorker.addEventListener("message", libraryCleanupListener);
+
+        sharedLibraryWorker.postMessage({
+          type: CoordinatorMessageType.CLEANUP,
+          requestId: uuidv4(),
+          options: {
+            closeChannels: true,
+            force: true,
+          },
+          responseRequired: true,
+        });
+
+        const timeoutId = setTimeout(() => {
+          if (sharedLibraryWorker) {
+            logger.warn(
+              "No cleanup response from library worker, forcing termination"
+            );
+            try {
+              sharedLibraryWorker.removeEventListener(
+                "message",
+                libraryCleanupListener
+              );
+              sharedLibraryWorker.terminate();
+              sharedLibraryWorker = null;
+            } catch (error) {
+              logger.warn(
+                "Error terminating shared library worker during timeout",
+                error
+              );
+            }
+          }
+        }, 1000);
+
+        this.terminationTimeouts.push(timeoutId);
+      } catch (error) {
+        logger.warn("Error setting up library worker cleanup", error);
+      }
+    }
+
+    // Final cleanup after all workers and coordinators have been given a chance to respond
+    const finalCleanupId = setTimeout(() => {
+      // Clear all internal structures
+      this.activeClients.clear();
+      this.workers = [];
+      this.availableWorkers = [];
+      this.coordinators = [];
+      this.coordinatorChannels = [];
+      this.workerCoordinatorChannels = [];
+      this.taskQueue = [];
+      this.orphanedResults.clear();
+
+      if (this.coordinatorStatusInterval) {
+        clearInterval(this.coordinatorStatusInterval);
+        this.coordinatorStatusInterval = null;
+      }
+
+      logger.log("All termination processes completed");
+    }, 1500);
+
+    this.terminationTimeouts.push(finalCleanupId);
   }
 
-  // Add a public method to ensure cleanup and reset the singleton instance
   public static resetInstance(): void {
     if (PDFWorkerPool.instance) {
       PDFWorkerPool.instance.terminateAll();

@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   getDocument,
   GlobalWorkerOptions,
@@ -21,10 +20,12 @@ import {
 import {
   CoordinatorMessageType,
   RegisterCoordinatorMessage,
+  CleanupMessage as CoordinatorCleanupMessage,
 } from "@/types/coordinator";
 import logger from "@/utils/logger";
 import { isBrowserWithWorker } from "@/utils/app";
 import { DEFAULT_PAGE_PROCESSING_CONFIG } from "@/constants/processing";
+import { SCALE_CACHE_SIZE } from "@/config/app";
 
 // Create a single worker for PDF.js library
 let pdfJsWorker: Worker | null = null;
@@ -49,7 +50,11 @@ const pdfDocuments = new Map<string, PDFDocumentProxy>();
 const coordinators = new Map<number, MessagePort>();
 
 // Cache for scale calculations to prevent redundant processing
-const scaleCache = new Map<string, number>();
+// Modified to be client-specific - a map of (clientId -> scale cache map)
+const scaleCache = new Map<string, Map<string, number>>();
+
+// Maximum entries per client's scale cache (from config)
+const MAX_SCALE_CACHE_ENTRIES = SCALE_CACHE_SIZE;
 
 class WorkerCanvasFactory {
   create(width: number, height: number) {
@@ -91,21 +96,31 @@ function calculateOptimalScale(
   pdfWidth: number,
   pdfHeight: number,
   config: PageProcessingConfig,
+  clientId: string,
   displayInfo?: DisplayInfo
 ): number {
   // Create a cache key from all input parameters
   const cacheKey = `${pdfWidth}-${pdfHeight}-${config.scale}-${config.maxDimension}-${displayInfo?.devicePixelRatio}-${displayInfo?.containerWidth}-${displayInfo?.containerHeight}`;
 
+  // Get or create client-specific cache
+  let clientCache = scaleCache.get(clientId);
+  if (!clientCache) {
+    clientCache = new Map<string, number>();
+    scaleCache.set(clientId, clientCache);
+  }
+
   // Check for cache hit and provide more detailed logging
-  if (scaleCache.has(cacheKey)) {
-    const cachedValue = scaleCache.get(cacheKey)!;
+  if (clientCache.has(cacheKey)) {
+    const cachedValue = clientCache.get(cacheKey)!;
     logger.log(
-      `CACHE HIT ✓ Key: ${cacheKey}, Value: ${cachedValue}, Cache size: ${scaleCache.size}`
+      `CACHE HIT ✓ Client: ${clientId}, Key: ${cacheKey}, Value: ${cachedValue}, Cache size: ${clientCache.size}`
     );
     return cachedValue; // This should exit the function immediately
   }
 
-  logger.log(`CACHE MISS ✗ Key: ${cacheKey}, Computing new scale...`);
+  logger.log(
+    `CACHE MISS ✗ Client: ${clientId}, Key: ${cacheKey}, Computing new scale...`
+  );
 
   const baseScale = config.scale || 1.0;
   const pixelRatio = displayInfo?.devicePixelRatio || 1;
@@ -143,14 +158,36 @@ function calculateOptimalScale(
   const minScale = pixelRatio > 1.5 ? 1.2 : 1.0;
   const optimalScale = Math.max(candidateScale, minScale);
 
-  // Store result in cache
-  scaleCache.set(cacheKey, optimalScale);
+  // Enforce cache size limit per client
+  if (clientCache.size >= MAX_SCALE_CACHE_ENTRIES) {
+    // Remove oldest entry (first key in the map)
+    const firstKey = clientCache.keys().next().value;
+    if (firstKey !== undefined) {
+      clientCache.delete(firstKey);
+      logger.log(
+        `Cache full for client ${clientId}, removed oldest entry: ${firstKey}`
+      );
+    }
+  }
 
-  // At the end, before returning
+  // Store result in client-specific cache
+  clientCache.set(cacheKey, optimalScale);
+
   logger.log(
-    `Calculated new scale: ${optimalScale}, Cache size: ${scaleCache.size}`
+    `Calculated new scale: ${optimalScale}, Client cache size: ${clientCache.size}, Total clients: ${scaleCache.size}`
   );
   return optimalScale;
+}
+
+// Clear cache for a specific client
+function clearClientScaleCache(clientId: string): void {
+  if (scaleCache.has(clientId)) {
+    const cacheSize = scaleCache.get(clientId)!.size;
+    scaleCache.delete(clientId);
+    logger.log(
+      `Cleared scale cache for client ${clientId} (${cacheSize} entries)`
+    );
+  }
 }
 
 // Process a message from a coordinator
@@ -170,32 +207,107 @@ const processMessage = async (
   }
 
   try {
-    switch (type) {
-      case CoordinatorMessageType.REGISTER_COORDINATOR: {
-        if (!e.ports || e.ports.length === 0) {
-          logger.error("No port provided for coordinator registration");
-          return;
-        }
-
-        const registerMessage = data as RegisterCoordinatorMessage;
-        const { coordinatorId } = registerMessage;
-        const port = e.ports[0];
-
-        // Set up message handler for this coordinator
-        port.onmessage = (event) => processMessage(event, port);
-
-        coordinators.set(coordinatorId, port);
-        logger.log(
-          `Registered coordinator ${coordinatorId}, total coordinators: ${coordinators.size}`
-        );
-        break;
+    // Handle special case for coordinator registration which doesn't need clientId
+    if (type === CoordinatorMessageType.REGISTER_COORDINATOR) {
+      if (!e.ports || e.ports.length === 0) {
+        logger.error("No port provided for coordinator registration");
+        return;
       }
 
+      const registerMessage = data as RegisterCoordinatorMessage;
+      const { coordinatorId } = registerMessage;
+      const port = e.ports[0];
+
+      // Set up message handler for this coordinator
+      port.onmessage = (event) => processMessage(event, port);
+
+      coordinators.set(coordinatorId, port);
+      logger.log(
+        `Registered coordinator ${coordinatorId}, total coordinators: ${coordinators.size}`
+      );
+      return;
+    }
+
+    // Handle coordinator cleanup request - may be for specific client or all clients
+    if (type === CoordinatorMessageType.CLEANUP) {
+      const cleanupMessage = data as CoordinatorCleanupMessage;
+      const cleanupRequestId = cleanupMessage.requestId || "";
+      const cleanupOptions = cleanupMessage.options || {};
+
+      logger.log(`Performing complete library worker cleanup`);
+
+      try {
+        // Clean up all PDF documents
+        const documentCleanupPromises: Promise<void>[] = [];
+        for (const [id, doc] of pdfDocuments.entries()) {
+          documentCleanupPromises.push(
+            doc
+              .cleanup()
+              .catch((err) =>
+                logger.warn(`Error cleaning document for client ${id}:`, err)
+              )
+          );
+        }
+
+        await Promise.all(documentCleanupPromises);
+
+        pdfDocuments.clear();
+        scaleCache.clear();
+
+        const shouldCloseChannels = cleanupOptions.closeChannels !== false; // Default to true if not specified
+
+        if (shouldCloseChannels) {
+          for (const [id, port] of coordinators.entries()) {
+            try {
+              logger.log(`Closing coordinator port ${id}`);
+              port.close();
+            } catch (err) {
+              logger.warn(`Error closing coordinator port ${id}:`, err);
+            }
+          }
+        } else {
+          logger.log(`Keeping coordinator ports open as requested by options`);
+        }
+
+        if (!cleanupMessage.clientId || shouldCloseChannels) {
+          coordinators.clear();
+        }
+
+        // Send success response directly to the main thread, not via coordinator port
+        // This response will be caught by the worker pool's
+        self.postMessage({
+          type: CoordinatorMessageType.CLEANUP,
+          requestId: cleanupRequestId,
+          success: true,
+          isLibraryWorkerResponse: true,
+        });
+
+        logger.log(`Library worker cleanup complete`);
+      } catch (error) {
+        logger.error(`Error during library worker cleanup:`, error);
+        self.postMessage({
+          type: CoordinatorMessageType.CLEANUP,
+          requestId: cleanupRequestId,
+          success: false,
+          error: error instanceof Error ? error.message : "Unknown error",
+          isLibraryWorkerResponse: true,
+        });
+      }
+
+      return;
+    }
+
+    // For all other message types, validate clientId is present
+    if (!clientId) {
+      throw new Error(`Client ID is required for operation type: ${type}`);
+    }
+
+    switch (type) {
       case LibraryWorkerMessageType.InitPDF: {
         const { pdfData } = data;
 
-        // Clear the scale cache when initializing a new PDF
-        scaleCache.clear();
+        // Clear the scale cache for this client
+        clearClientScaleCache(clientId);
 
         // Initialize the PDF document
         const pdfDocument = await getDocument({
@@ -211,7 +323,6 @@ const processMessage = async (
         // Store the document reference
         pdfDocuments.set(clientId, pdfDocument);
 
-        // Return properly typed success message with page count
         const initMessage: PDFInitializedMessage = {
           type: WorkerMessageType.PDFInitialized,
           clientId,
@@ -242,11 +353,12 @@ const processMessage = async (
         const height = baseViewport.height;
         const rotation = baseViewport.rotation;
 
-        // Calculate optimal scale using the cached function
+        // Calculate optimal scale using the cached function with clientId
         const scale = calculateOptimalScale(
           width,
           height,
           config,
+          clientId,
           getPageMessage.displayInfo
         );
 
@@ -285,7 +397,6 @@ const processMessage = async (
         // Clean up the page
         page.cleanup();
 
-        // Directly return a PageProcessed message, skipping the intermediate GetPage response
         const pageProcessedMessage: PageProcessedMessage = {
           type: WorkerMessageType.PageProcessed,
           clientId,
@@ -305,12 +416,18 @@ const processMessage = async (
       case LibraryWorkerMessageType.CleanupDocument: {
         const pdfDocument = pdfDocuments.get(clientId);
         if (pdfDocument) {
-          await pdfDocument.cleanup();
-          pdfDocuments.delete(clientId);
+          try {
+            await pdfDocument.cleanup();
+            pdfDocuments.delete(clientId);
+          } catch (error) {
+            logger.warn(
+              `Error cleaning up PDF document for client ${clientId}:`,
+              error
+            );
+          }
         }
 
-        // Clear the scale cache
-        scaleCache.clear();
+        clearClientScaleCache(clientId);
 
         const cleanupMessage: CleanupMessage = {
           type: WorkerMessageType.Cleanup,
@@ -318,7 +435,6 @@ const processMessage = async (
           requestId,
           success: true,
         };
-        console.log("Cleanup message sent", cleanupMessage);
         targetPort.postMessage(cleanupMessage);
         break;
       }
@@ -330,8 +446,7 @@ const processMessage = async (
           pdfDocuments.delete(clientId);
         }
 
-        // Clear the scale cache
-        scaleCache.clear();
+        clearClientScaleCache(clientId);
 
         const abortMessage: AbortProcessingMessage = {
           type: WorkerMessageType.AbortProcessing,
@@ -365,5 +480,4 @@ const processMessage = async (
   }
 };
 
-// Set up main message handler
 self.onmessage = processMessage;

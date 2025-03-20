@@ -39,7 +39,7 @@ export enum LibraryWorkerMessageType {
 
 export interface BaseWorkerMessage {
   type: WorkerMessageType | LibraryWorkerMessageType;
-  clientId?: string;
+  clientId: string;
   requestId?: string;
 }
 
@@ -109,8 +109,6 @@ export type WorkerMessage =
  */
 export interface WorkerToPDFLibraryMessage extends BaseWorkerMessage {
   type: LibraryWorkerMessageType;
-  clientId: string;
-  requestId: string;
   transfer?: Transferable[];
   pageNumber?: number;
   pdfData?: ArrayBuffer;
@@ -190,7 +188,7 @@ export interface RecoveryQueueEntry {
 export interface BaseRecoveryNotificationData {
   recoveryKey: string;
   timestamp: number;
-  clientId?: string;
+  clientId: string;
 }
 
 export interface PageProcessedRecoveryData
@@ -290,4 +288,34 @@ export function createCoordinatorFallbackMessage<T extends WorkerMessage>(
     coordinatorFallback: true,
     coordinatorId,
   };
+}
+
+/**
+ * Standard cleanup options shared across worker components
+ */
+export interface CleanupOptions {
+  /** Force cleanup even if client isn't found in active list */
+  force?: boolean;
+  /** Don't log standard cleanup messages */
+  silent?: boolean;
+  /** Mark the requests as pending cleanup but don't remove them yet */
+  delayRequestRemoval?: boolean;
+  /** The timeout in ms for delayed request removal */
+  requestRemovalDelay?: number;
+  /** Whether to close channel ports during cleanup */
+  closeChannels?: boolean;
+}
+
+/**
+ * Response from a cleanup operation
+ */
+export interface CleanupResponse {
+  /** Whether the cleanup was successful */
+  success: boolean;
+  /** Number of worker responses received */
+  workerResponses: number;
+  /** Number of coordinator responses received */
+  coordinatorResponses: number;
+  /** Whether the cleanup operation timed out */
+  timedOut: boolean;
 }

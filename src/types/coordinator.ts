@@ -6,7 +6,6 @@ export enum CoordinatorMessageType {
   COORDINATOR_STATUS = "COORDINATOR_STATUS",
   REGISTER_WORKER = "REGISTER_WORKER",
   CLEANUP = "CLEANUP",
-  CLEANUP_CLIENT = "CLEANUP_CLIENT",
 }
 
 export interface CoordinatorMessage {
@@ -50,13 +49,17 @@ export interface RegisterWorkerMessage extends CoordinatorMessage {
 
 export interface CleanupMessage extends CoordinatorMessage {
   type: CoordinatorMessageType.CLEANUP;
-}
-
-export interface CleanupClientMessage {
-  type: CoordinatorMessageType.CLEANUP_CLIENT;
-  clientId: string;
-  requestId: string;
+  clientId?: string;
+  requestId?: string;
+  options?: {
+    force?: boolean;
+    silent?: boolean;
+    delayRequestRemoval?: boolean;
+    requestRemovalDelay?: number;
+    closeChannels?: boolean;
+  };
   success?: boolean;
+  responseRequired?: boolean;
 }
 
 // Type guard to check if a message is of a specific coordinator type

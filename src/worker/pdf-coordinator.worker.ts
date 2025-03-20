@@ -1,21 +1,19 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   LibraryWorkerMessageType,
   WorkerToPDFLibraryMessage,
   WorkerMessageType,
   createCoordinatorFallbackMessage,
+  CleanupOptions,
 } from "@/types/processor";
 import {
   CoordinatorMessageType,
   InitCoordinatorMessage,
   CoordinatorStatusMessage,
   CoordinatorReadyMessage,
-  CleanupClientMessage,
   CoordinatorMessage,
   RegisterWorkerMessage,
+  CleanupMessage,
 } from "@/types/coordinator";
-
 import logger from "@/utils/logger";
 
 // Initialize connection to the PDF.js library
@@ -56,7 +54,6 @@ self.onmessage = (
     // Initialize as a coordinator with the library worker and ID
     coordinatorId = initMessage.coordinatorId;
 
-    // Access the library worker port from the ports array
     if (e.ports && e.ports.length > 0) {
       libraryWorker = e.ports[0];
 
@@ -126,17 +123,13 @@ function handleProcessingWorkerMessage(
           clientId: workerClientId,
         } = workerData;
 
-        // Store port for the response if requestId exists
         if (requestId) {
           pendingRequests.set(requestId, workerPort);
 
-          // Track which client this request belongs to
           if (workerClientId) {
-            // Initialize a set for this client if it doesn't exist
             if (!clientRequests.has(workerClientId)) {
               clientRequests.set(workerClientId, new Set<string>());
             }
-            // Add this request to the client's set
             clientRequests.get(workerClientId)?.add(requestId);
 
             logger.log(
@@ -160,10 +153,8 @@ function handleProcessingWorkerMessage(
         libraryWorker.postMessage(workerData, workerData.transfer || []);
       };
 
-      // Start the port
       workerPort.start();
 
-      // Store the port for future reference
       workerPorts.set(workerId, workerPort);
       return;
     }
@@ -172,106 +163,108 @@ function handleProcessingWorkerMessage(
 
   // Handle messages that don't require a port first
   if (type === CoordinatorMessageType.CLEANUP) {
-    logger.log(
-      `[Coordinator ${coordinatorId}] Received cleanup request, cleaning up resources`
-    );
+    const cleanupMessage = data as CleanupMessage;
+    const clientIdToClean = cleanupMessage.clientId;
+    const cleanupOptions = cleanupMessage.options || {};
+    const responseRequired = cleanupMessage.responseRequired || false;
+    const cleanupRequestId = cleanupMessage.requestId || "";
 
-    // Clean up all clients first
-    const allClients = [...activeClients, ...cleaningUpClients];
-
-    // Clean up each client's resources
-    allClients.forEach((clientId) => {
-      cleanupClientResources(clientId, {
-        silent: true, // No need to log each client cleanup during full coordinator cleanup
-        force: true, // Force cleanup even if not found in active list
-        delayRequestRemoval: false, // Immediate cleanup
-      });
-    });
-
-    // Clear any remaining maps and structures
-    pendingRequests.clear();
-    activeClients.clear();
-    clientRequests.clear();
-    cleaningUpClients.clear();
-    clientCleanupTimeouts.clear();
-
-    // Close any open worker ports
-    workerPorts.forEach((port, id) => {
-      try {
-        logger.log(
-          `[Coordinator ${coordinatorId}] Closing port for worker ${id}`
-        );
-        port.close();
-      } catch (err) {
-        logger.warn(
-          `[Coordinator ${coordinatorId}] Error closing port for worker ${id}:`,
-          err
-        );
-      }
-    });
-    workerPorts.clear();
-
-    return;
-  }
-
-  // Handle client cleanup request
-  if (type === CoordinatorMessageType.CLEANUP_CLIENT) {
-    const clientIdToClean = data.clientId || "";
-
-    if (!clientIdToClean) {
-      logger.warn(
-        `[Coordinator ${coordinatorId}] Received cleanup request with empty client ID`
+    // If clientId is provided, do client-specific cleanup
+    if (clientIdToClean) {
+      logger.log(
+        `[Coordinator ${coordinatorId}] Received cleanup request for client ${clientIdToClean}`
       );
 
-      // Send failure response
-      if (ports && ports.length > 0) {
-        const responsePort = ports[0];
-        responsePort.postMessage({
-          type: CoordinatorMessageType.CLEANUP_CLIENT,
-          clientId: "",
-          requestId: requestId || "",
-          success: false,
-        });
-      } else {
-        self.postMessage({
-          type: CoordinatorMessageType.CLEANUP_CLIENT,
-          clientId: "",
-          requestId: requestId || "",
-          success: false,
-        });
+      const cleanupSuccess = cleanupClientResources(clientIdToClean, {
+        silent: cleanupOptions.silent || false,
+        force: cleanupOptions.force || false,
+        delayRequestRemoval: cleanupOptions.delayRequestRemoval || false,
+        requestRemovalDelay: cleanupOptions.requestRemovalDelay || 5000,
+      });
+
+      // Send response
+      if (responseRequired) {
+        // If we have a port to respond to
+        if (ports && ports.length > 0) {
+          const responsePort = ports[0];
+          const response: CleanupMessage = {
+            type: CoordinatorMessageType.CLEANUP,
+            clientId: clientIdToClean,
+            requestId: cleanupRequestId,
+            success: cleanupSuccess,
+          };
+          responsePort.postMessage(response);
+        } else {
+          // Respond via main thread
+          const response: CleanupMessage = {
+            type: CoordinatorMessageType.CLEANUP,
+            clientId: clientIdToClean,
+            requestId: cleanupRequestId,
+            success: cleanupSuccess,
+          };
+          self.postMessage(response);
+        }
       }
-      return;
-    }
-
-    logger.log(
-      `[Coordinator ${coordinatorId}] Received cleanup request for client ${clientIdToClean}`
-    );
-
-    // Use the cleanup function with delayed request removal
-    const cleanupSuccess = cleanupClientResources(clientIdToClean, {
-      delayRequestRemoval: true,
-      requestRemovalDelay: 5000,
-    });
-
-    // If we have a port to respond to
-    if (ports && ports.length > 0) {
-      const responsePort = ports[0];
-      const response: CleanupClientMessage = {
-        type: CoordinatorMessageType.CLEANUP_CLIENT,
-        clientId: clientIdToClean,
-        requestId: requestId || "",
-        success: cleanupSuccess,
-      };
-      responsePort.postMessage(response);
     } else {
-      // Respond via main thread
-      const response: CleanupClientMessage = {
-        type: CoordinatorMessageType.CLEANUP_CLIENT,
-        clientId: clientIdToClean || "",
-        requestId: requestId || "",
-        success: cleanupSuccess,
-      };
-      self.postMessage(response);
+      // Full coordinator cleanup
+      logger.log(
+        `[Coordinator ${coordinatorId}] Received full cleanup request, cleaning up resources`
+      );
+
+      // Clean up all clients first
+      const allClients = [...activeClients, ...cleaningUpClients];
+
+      // Clean up each client's resources
+      allClients.forEach((clientId) => {
+        cleanupClientResources(clientId, {
+          silent: true, // No need to log each client cleanup during full coordinator cleanup
+          force: true, // Force cleanup even if not found in active list
+          delayRequestRemoval: false, // Immediate cleanup
+        });
+      });
+
+      pendingRequests.clear();
+      activeClients.clear();
+      clientRequests.clear();
+      cleaningUpClients.clear();
+      clientCleanupTimeouts.clear();
+
+      // Close worker ports if requested
+      if (cleanupOptions.closeChannels !== false) {
+        workerPorts.forEach((port, id) => {
+          try {
+            logger.log(
+              `[Coordinator ${coordinatorId}] Closing port for worker ${id}`
+            );
+            port.close();
+          } catch (err) {
+            logger.warn(
+              `[Coordinator ${coordinatorId}] Error closing port for worker ${id}:`,
+              err
+            );
+          }
+        });
+        workerPorts.clear();
+      }
+
+      // Send success response
+      if (responseRequired && ports && ports.length > 0) {
+        const responsePort = ports[0];
+        const response: CleanupMessage = {
+          type: CoordinatorMessageType.CLEANUP,
+          requestId: cleanupRequestId,
+          success: true,
+        };
+        responsePort.postMessage(response);
+      } else {
+        // Respond via main thread
+        const response: CleanupMessage = {
+          type: CoordinatorMessageType.CLEANUP,
+          requestId: cleanupRequestId,
+          success: true,
+        };
+        self.postMessage(response);
+      }
     }
 
     return;
@@ -306,11 +299,9 @@ function handleProcessingWorkerMessage(
         // If we have a client ID, track this request-client relationship
         const clientIdFromMessage = data.clientId;
         if (clientIdFromMessage) {
-          // Initialize a set for this client if it doesn't exist
           if (!clientRequests.has(clientIdFromMessage)) {
             clientRequests.set(clientIdFromMessage, new Set<string>());
           }
-          // Add this request to the client's set
           clientRequests.get(clientIdFromMessage)?.add(requestId);
 
           logger.log(
@@ -461,19 +452,13 @@ function handleLibraryMessage(e: MessageEvent) {
  */
 function cleanupClientResources(
   clientId: string,
-  options: {
-    /** Don't log standard cleanup messages */
-    silent?: boolean;
-    /** Force cleanup even if client isn't found in active list */
-    force?: boolean;
+  options: CleanupOptions & {
     /** Clear any pending cleanup timeout for this client */
     clearTimeout?: boolean;
-    /** Mark the requests as pending cleanup but don't remove them yet */
-    delayRequestRemoval?: boolean;
-    /** The timeout in ms for delayed request removal */
-    requestRemovalDelay?: number;
     /** Specific request ID to exclude from cleanup (e.g., current request being processed) */
     excludeRequestId?: string;
+    /** Whether this is a worker termination request */
+    isWorkerTermination?: boolean;
   } = {}
 ): boolean {
   // Default options
@@ -484,6 +469,7 @@ function cleanupClientResources(
     delayRequestRemoval = false,
     requestRemovalDelay = 5000,
     excludeRequestId,
+    isWorkerTermination = false,
   } = options;
 
   // Check if client exists in our tracking
@@ -515,6 +501,13 @@ function cleanupClientResources(
 
   // Remove from active clients
   activeClients.delete(clientId);
+
+  // Special handling for worker termination requests
+  if (isWorkerTermination && !silent) {
+    logger.log(
+      `[Coordinator ${coordinatorId}] Processing worker termination request`
+    );
+  }
 
   // Handle requests cleanup based on delay option
   if (clientRequests.has(clientId)) {
