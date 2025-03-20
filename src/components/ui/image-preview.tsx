@@ -215,10 +215,9 @@ export function ImagePreview() {
                       <Button
                         onClick={handlePrevious}
                         size="icon"
-                        variant="ghost"
-                        className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
+                        variant="subtle"
                       >
-                        <ChevronLeft aria-hidden="true" className="h-6 w-6" />
+                        <ChevronLeft aria-hidden="true" className="h-4 w-4" />
                         <span className="sr-only">Previous Image</span>
                       </Button>
                     </TooltipTrigger>
@@ -236,13 +235,8 @@ export function ImagePreview() {
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button
-                        onClick={handleNext}
-                        size="icon"
-                        variant="ghost"
-                        className="rounded-full bg-black/40 hover:bg-black/60 h-10 w-10"
-                      >
-                        <ChevronRight aria-hidden="true" className="h-6 w-6" />
+                      <Button onClick={handleNext} size="icon" variant="subtle">
+                        <ChevronRight aria-hidden="true" className="h-4 w-4" />
                         <span className="sr-only">Next Image</span>
                       </Button>
                     </TooltipTrigger>

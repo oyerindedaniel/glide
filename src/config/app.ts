@@ -55,6 +55,19 @@ const DEFAULT_PAGE_PROCESSING_SLOTS = process.env
   ? parseInt(process.env.NEXT_PUBLIC_DEFAULT_PAGE_PROCESSING_SLOTS)
   : 2;
 
+// Auto-concurrency configuration
+const MIN_CONCURRENCY = process.env.NEXT_PUBLIC_MIN_CONCURRENCY
+  ? parseInt(process.env.NEXT_PUBLIC_MIN_CONCURRENCY)
+  : 1;
+
+const MAX_CONCURRENCY = process.env.NEXT_PUBLIC_MAX_CONCURRENCY
+  ? parseInt(process.env.NEXT_PUBLIC_MAX_CONCURRENCY)
+  : 8;
+
+const CPU_USAGE_PERCENTAGE = process.env.NEXT_PUBLIC_CPU_USAGE_PERCENTAGE
+  ? parseFloat(process.env.NEXT_PUBLIC_CPU_USAGE_PERCENTAGE)
+  : 0.75; // Use 75% of available cores by default
+
 // PDF processing quality configurations
 const PDF_CONFIG_SMALL = {
   scale: process.env.NEXT_PUBLIC_PDF_CONFIG_SMALL_SCALE
@@ -173,6 +186,9 @@ export {
   PDF_CACHE_CLEANUP_INTERVAL,
   DEFAULT_MAX_CONCURRENT_FILES,
   DEFAULT_PAGE_PROCESSING_SLOTS,
+  MIN_CONCURRENCY,
+  MAX_CONCURRENCY,
+  CPU_USAGE_PERCENTAGE,
   PDF_CONFIG_SMALL,
   PDF_CONFIG_MEDIUM,
   PDF_CONFIG_LARGE,

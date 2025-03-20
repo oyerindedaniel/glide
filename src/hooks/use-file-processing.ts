@@ -14,6 +14,7 @@ import { usePanelHelpers } from "./use-panel-helpers";
 import { useShallow } from "zustand/shallow";
 import { DisplayInfo } from "@/types/processor";
 import { resetPDFWorkerPoolInstance } from "@/utils/pdf-cleanup";
+import logger from "@/utils/logger";
 
 export type ProcessingInfo = {
   fileName: string;
@@ -89,7 +90,20 @@ export function useFileProcessing(
    */
   const processPdfs = useCallback(
     async (files: File[], abortSignal: AbortSignal) => {
-      const batchProcessor = new PDFBatchProcessor({});
+      const batchProcessor = new PDFBatchProcessor({
+        detectOptimalConcurrency: true,
+        concurrencyOptions: {
+          cpuPercentage: files.length > 5 ? 0.6 : 0.75,
+        },
+      });
+
+      const concurrencyInfo = batchProcessor.getConcurrencyInfo();
+      logger.log(
+        `PDF Processing using ${concurrencyInfo.maxConcurrentFiles} concurrent files` +
+          (concurrencyInfo.usedOptimalDetection
+            ? " (automatically determined)"
+            : "")
+      );
 
       setTimeout(() => {
         toast.loading("Processing PDFs...", { id: "file-processing" });
@@ -167,11 +181,25 @@ export function useFileProcessing(
         allowedImageTypes: allowedFileTypes.filter((type) =>
           type.includes("image")
         ),
+        detectOptimalConcurrency: true,
+        concurrencyOptions: {
+          cpuPercentage: files.length > 20 ? 0.5 : 0.7,
+          minConcurrency: 2,
+          maxConcurrency: files.length > 50 ? 10 : 16,
+        },
       });
+
+      const concurrencyInfo = batchProcessor.getConcurrencyInfo();
+      logger.log(
+        `Image Processing using ${concurrencyInfo.maxConcurrentFiles} concurrent files` +
+          (concurrencyInfo.usedOptimalDetection
+            ? " (automatically determined)"
+            : "")
+      );
 
       setTimeout(() => {
         toast.loading("Processing images...", { id: "file-processing" });
-      }, 500);
+      }, 350);
 
       try {
         await batchProcessor.processBatch(

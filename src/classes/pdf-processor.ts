@@ -17,6 +17,11 @@ import {
   generateRandomId,
   getExponentialBackoffDelay,
 } from "@/utils/app";
+import {
+  createConcurrencyConfig,
+  ConcurrencyOptions,
+  ConcurrencyConfig,
+} from "@/utils/concurrency";
 import pLimit from "p-limit";
 import { toast } from "sonner";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
@@ -1137,13 +1142,59 @@ export class PDFProcessor {
 export class PDFBatchProcessor {
   private maxConcurrentFiles: number;
   private processorOptions: Partial<ProcessingOptions>;
+  private usedOptimalConcurrency: boolean = false;
 
   constructor({
     maxConcurrentFiles = DEFAULT_MAX_CONCURRENT_FILES,
     processorOptions = {},
+    detectOptimalConcurrency = true,
+    concurrencyOptions = {},
+  }: {
+    maxConcurrentFiles?: number;
+    processorOptions?: Partial<ProcessingOptions>;
+    detectOptimalConcurrency?: boolean;
+    concurrencyOptions?: ConcurrencyOptions;
   } = {}) {
-    this.maxConcurrentFiles = maxConcurrentFiles;
+    if (detectOptimalConcurrency && isBrowser) {
+      try {
+        const concurrencyConfig = createConcurrencyConfig({
+          customConcurrency:
+            maxConcurrentFiles !== DEFAULT_MAX_CONCURRENT_FILES
+              ? maxConcurrentFiles
+              : undefined,
+          ...concurrencyOptions,
+        });
+
+        this.maxConcurrentFiles = concurrencyConfig.maxConcurrentFiles;
+        this.usedOptimalConcurrency = concurrencyConfig.usedOptimalDetection;
+
+        if (concurrencyConfig.usedOptimalDetection) {
+          logger.log(
+            `Using optimal concurrency: ${this.maxConcurrentFiles} concurrent files based on system capabilities`
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          "Failed to detect optimal concurrency, using default",
+          error
+        );
+        this.maxConcurrentFiles = maxConcurrentFiles;
+      }
+    } else {
+      this.maxConcurrentFiles = maxConcurrentFiles;
+    }
+
     this.processorOptions = processorOptions;
+  }
+
+  /**
+   * Get information about the current concurrency configuration
+   */
+  public getConcurrencyInfo(): ConcurrencyConfig {
+    return {
+      maxConcurrentFiles: this.maxConcurrentFiles,
+      usedOptimalDetection: this.usedOptimalConcurrency,
+    };
   }
 
   /**
@@ -1175,7 +1226,22 @@ export class PDFBatchProcessor {
     }
 
     try {
-      await PDFWorkerPool.getInstance();
+      const workerPool = await PDFWorkerPool.getInstance({
+        detectOptimalConcurrency: true,
+        concurrencyOptions: {
+          customConcurrency: this.usedOptimalConcurrency
+            ? this.maxConcurrentFiles
+            : undefined,
+        },
+      });
+
+      const poolConfig = workerPool.getPoolConfiguration();
+      logger.log(
+        `PDF Batch Processor: ${this.maxConcurrentFiles} concurrent files` +
+          (this.usedOptimalConcurrency ? " (auto-detected)" : "") +
+          `, Worker Pool: ${poolConfig.maxWorkers} workers, ${poolConfig.coordinatorCount} coordinators` +
+          (poolConfig.usedOptimalDetection ? " (auto-detected)" : "")
+      );
     } catch (error) {
       logger.error("Error initializing worker", error);
       throw new Error("Failed to initialize PDF workers. Please try again.");
@@ -1498,8 +1564,14 @@ export class PDFBatchProcessor {
    * when the PDF processing functionality is no longer needed
    */
   public static async terminateAllWorkers(): Promise<void> {
-    const workerPool = await PDFWorkerPool.getInstance();
-    workerPool.terminateAll();
+    try {
+      const workerPool = await PDFWorkerPool.getInstance({
+        detectOptimalConcurrency: false,
+      });
+      workerPool.terminateAll();
+    } catch (error) {
+      logger.error("Error terminating worker pool:", error);
+    }
   }
 }
 
