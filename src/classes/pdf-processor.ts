@@ -32,6 +32,10 @@ import {
   PDF_CONFIG_LARGE,
   MAX_PAGE_RETRIES,
   BASE_DELAY_MS,
+  PDF_MAX_TIMEOUT,
+  PDF_HEARTBEAT_INTERVAL,
+  PDF_INACTIVITY_WARNING_THRESHOLD,
+  PDF_INACTIVITY_ERROR_THRESHOLD,
 } from "@/config/app";
 import recoveryEmitter from "@/utils/recovery-event-emitter";
 import { v4 as uuidv4 } from "uuid";
@@ -1531,11 +1535,10 @@ function createTimeoutPromise(
   processorClientId: string,
   abortSignal?: AbortSignal
 ): { timeoutPromise: Promise<void>; resolveTimeout: () => void } {
-  // TODO: move to config/env
-  const MAX_TIMEOUT = 300000; // 5 minutes absolute maximum
-  const HEARTBEAT_INTERVAL = 5000; // 5 seconds between checks
-  const INACTIVITY_WARNING_THRESHOLD = HEARTBEAT_INTERVAL * 2; // 10s warning
-  const INACTIVITY_ERROR_THRESHOLD = HEARTBEAT_INTERVAL * 6; // 30s timeout
+  const MAX_TIMEOUT = PDF_MAX_TIMEOUT;
+  const HEARTBEAT_INTERVAL = PDF_HEARTBEAT_INTERVAL;
+  const INACTIVITY_WARNING_THRESHOLD = PDF_INACTIVITY_WARNING_THRESHOLD;
+  const INACTIVITY_ERROR_THRESHOLD = PDF_INACTIVITY_ERROR_THRESHOLD;
 
   let lastActivityTimestamp = Date.now();
   let isProcessingActive = true;

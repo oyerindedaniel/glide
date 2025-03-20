@@ -1,6 +1,15 @@
 import { FILE_INPUT_TYPES } from "@/constants/processing";
+import {
+  MAX_FILENAME_LENGTH,
+  PDF_MAX_FILES_IN_BATCH,
+  PDF_SINGLE_FILE_MAX_SIZE,
+  PDF_BATCH_FILE_MAX_SIZE,
+  PDF_TOTAL_BATCH_MAX_SIZE,
+  IMAGE_MAX_FILES_IN_BATCH,
+  IMAGE_SINGLE_FILE_MAX_SIZE,
+  IMAGE_TOTAL_BATCH_MAX_SIZE,
+} from "@/config/app";
 
-export const MAX_FILENAME_LENGTH = 255; // Maximum safe filename length
 export const FILENAME_SAFE_REGEX = /^[a-zA-Z0-9-_. ]+$/; // Only allow alphanumeric, dash, underscore, dot, and space
 
 /**
@@ -256,19 +265,19 @@ export function validateFileBatch(
     return { isValid: false, error: "No files provided" };
   }
 
-  // PDF constants
+  // PDF constants - Using values from config
   const PDF_LIMITS = {
-    MAX_FILES_IN_BATCH: 10,
-    SINGLE_FILE_MAX_SIZE: 100 * 1024 * 1024, // 100MB
-    BATCH_FILE_MAX_SIZE: 50 * 1024 * 1024, // 50MB
-    TOTAL_BATCH_MAX_SIZE: 500 * 1024 * 1024, // 500MB
+    MAX_FILES_IN_BATCH: PDF_MAX_FILES_IN_BATCH,
+    SINGLE_FILE_MAX_SIZE: PDF_SINGLE_FILE_MAX_SIZE,
+    BATCH_FILE_MAX_SIZE: PDF_BATCH_FILE_MAX_SIZE,
+    TOTAL_BATCH_MAX_SIZE: PDF_TOTAL_BATCH_MAX_SIZE,
   };
 
-  // Image constants
+  // Image constants - Using values from config
   const IMAGE_LIMITS = {
-    MAX_FILES_IN_BATCH: 100,
-    SINGLE_FILE_MAX_SIZE: 8 * 1024 * 1024, // 8MB
-    TOTAL_BATCH_MAX_SIZE: 500 * 1024 * 1024, // 500MB
+    MAX_FILES_IN_BATCH: IMAGE_MAX_FILES_IN_BATCH,
+    SINGLE_FILE_MAX_SIZE: IMAGE_SINGLE_FILE_MAX_SIZE,
+    TOTAL_BATCH_MAX_SIZE: IMAGE_TOTAL_BATCH_MAX_SIZE,
   };
 
   // Detect file category first to apply appropriate limits
