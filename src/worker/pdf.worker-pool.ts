@@ -34,6 +34,7 @@ import recoveryEmitter from "@/utils/recovery-event-emitter";
 import {
   createConcurrencyConfig,
   ConcurrencyOptions,
+  calculateOptimalCoordinatorCount,
 } from "@/utils/concurrency";
 
 // Reference to the shared PDF.js library worker
@@ -96,7 +97,6 @@ export class PDFWorkerPool {
   private coordinatorHandlers: Map<Worker, EventListener> = new Map();
   private coordinatorStatusInterval: NodeJS.Timeout | null = null;
 
-  // Track whether optimal concurrency was used
   private usedOptimalConcurrency: boolean = false;
 
   private constructor(options: WorkerPoolOptions = {}) {
@@ -127,12 +127,8 @@ export class PDFWorkerPool {
           this.usedOptimalConcurrency &&
           options.coordinatorCount === undefined
         ) {
-          this.coordinatorCount = Math.max(
-            1,
-            Math.min(
-              4, // Cap at 4 coordinators max
-              Math.ceil(this.maxWorkers / 2) // Roughly 1 coordinator per 2 workers
-            )
+          this.coordinatorCount = calculateOptimalCoordinatorCount(
+            this.maxWorkers
           );
         } else {
           this.coordinatorCount = initialCoordinatorCount;

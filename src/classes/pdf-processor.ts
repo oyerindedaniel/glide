@@ -21,6 +21,7 @@ import {
   createConcurrencyConfig,
   ConcurrencyOptions,
   ConcurrencyConfig,
+  calculateOptimalCoordinatorCount,
 } from "@/utils/concurrency";
 import pLimit from "p-limit";
 import { toast } from "sonner";
@@ -904,7 +905,6 @@ export class PDFProcessor {
       async (data) => {
         const pageData = data as PageProcessedRecoveryData;
 
-        // Verify this recovery event belongs to this processor by matching client ID
         if (!pageData.clientId || pageData.clientId !== this.clientId) return;
 
         logger.log(
@@ -963,7 +963,6 @@ export class PDFProcessor {
                 (item) => item.pageNumber !== pageNumber
               );
 
-              // Update processing tracking
               this.processingPages.delete(pageNumber);
               this.activeProcessing = Math.max(0, this.activeProcessing - 1);
             }
@@ -1233,6 +1232,9 @@ export class PDFBatchProcessor {
             ? this.maxConcurrentFiles
             : undefined,
         },
+        coordinatorCount: this.usedOptimalConcurrency
+          ? calculateOptimalCoordinatorCount(this.maxConcurrentFiles)
+          : undefined,
       });
 
       const poolConfig = workerPool.getPoolConfiguration();
@@ -1246,8 +1248,6 @@ export class PDFBatchProcessor {
       logger.error("Error initializing worker", error);
       throw new Error("Failed to initialize PDF workers. Please try again.");
     }
-
-    console.log("Processing batch", files.length);
 
     const limit = pLimit(this.maxConcurrentFiles);
 

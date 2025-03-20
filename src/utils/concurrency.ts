@@ -168,3 +168,14 @@ export function createConcurrencyConfig(
     usedOptimalDetection: true,
   };
 }
+
+/**
+ * Calculates the optimal number of coordinators based on the number of workers
+ * This ensures a balanced ratio between coordinators and workers
+ *
+ * @param workers - The number of workers (maxConcurrentFiles or maxWorkers)
+ * @returns The optimal number of coordinators (between 1 and 4)
+ */
+export function calculateOptimalCoordinatorCount(workers: number): number {
+  return Math.max(1, Math.min(4, Math.ceil(workers / 2)));
+}
