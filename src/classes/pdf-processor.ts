@@ -45,6 +45,15 @@ import {
 } from "@/config/app";
 import recoveryEmitter from "@/utils/recovery-event-emitter";
 import { v4 as uuidv4 } from "uuid";
+import {
+  WorkerError,
+  WorkerInitializationError,
+  WorkerTimeoutError,
+  WorkerCleanupError,
+  WorkerCommunicationError,
+  WorkerPoolError,
+  AbortError,
+} from "@/utils/error";
 
 // Check if we're in a browser environment with Web Workers
 const isBrowser = isBrowserWithWorker();
@@ -219,8 +228,22 @@ export class PDFProcessor {
       try {
         return await operation();
       } catch (error) {
-        const typedError =
-          error instanceof Error ? error : new Error(String(error));
+        let typedError: Error;
+
+        if (error instanceof WorkerInitializationError) {
+          typedError = error;
+        } else if (error instanceof WorkerTimeoutError) {
+          typedError = error;
+        } else if (error instanceof WorkerCleanupError) {
+          typedError = error;
+        } else if (error instanceof WorkerCommunicationError) {
+          typedError = error;
+        } else if (error instanceof WorkerPoolError) {
+          typedError = error;
+        } else {
+          typedError =
+            error instanceof Error ? error : new Error(String(error));
+        }
 
         if (!shouldRetry(typedError)) {
           throw typedError;
@@ -261,7 +284,9 @@ export class PDFProcessor {
         async () => {
           const worker = await workerPool.getWorker();
           if (!worker) {
-            throw new Error("Failed to get worker from pool");
+            throw new WorkerInitializationError(
+              "Failed to get worker from pool"
+            );
           }
           return worker;
         },
@@ -283,7 +308,7 @@ export class PDFProcessor {
       this.setupRecoveryEventHandlers();
 
       worker.onerror = (event) => {
-        const error = new Error(`Worker error: ${event.message}`);
+        const error = new WorkerError(`Worker error: ${event.message}`);
         logger.error(`Worker error: ${event.message}`);
         this.onError?.(error);
 
@@ -300,11 +325,13 @@ export class PDFProcessor {
       logger.error("Failed to initialize worker:", error);
       if (this.onError) {
         this.onError(
-          new Error(
-            `Failed to initialize worker: ${
-              error instanceof Error ? error.message : String(error)
-            }`
-          )
+          error instanceof WorkerError
+            ? error
+            : new WorkerInitializationError(
+                `Failed to initialize worker: ${
+                  error instanceof Error ? error.message : String(error)
+                }`
+              )
         );
       }
 
@@ -549,7 +576,7 @@ export class PDFProcessor {
 
     // Reject all queue items
     this.processingQueue.forEach((item) => {
-      item.reject(new Error("Processing aborted"));
+      item.reject(new AbortError("Processing aborted"));
     });
     this.processingQueue = [];
     this.activeProcessing = 0;
@@ -601,7 +628,7 @@ export class PDFProcessor {
     }
 
     if (this.abortSignal?.aborted) {
-      throw new Error("Processing aborted");
+      throw new AbortError("Processing aborted");
     }
 
     if (statusCallback) {
@@ -616,7 +643,7 @@ export class PDFProcessor {
     const pdfData = await file.arrayBuffer();
 
     if (this.abortSignal?.aborted) {
-      throw new Error("Processing aborted");
+      throw new AbortError("Processing aborted");
     }
 
     try {
@@ -718,7 +745,7 @@ export class PDFProcessor {
     }
 
     if (this.isAborted || this.abortSignal?.aborted) {
-      throw new Error("Processing aborted");
+      throw new AbortError("Processing aborted");
     }
 
     if (!this.expectingResponses) {
@@ -756,7 +783,7 @@ export class PDFProcessor {
 
           return await new Promise((resolve, reject) => {
             if (this.isAborted || this.abortSignal?.aborted) {
-              reject(new Error("Processing aborted"));
+              reject(new AbortError("Processing aborted"));
               return;
             }
 
@@ -768,7 +795,7 @@ export class PDFProcessor {
             const abortHandler = () => {
               this.processingQueue = this.processingQueue.filter((item) => {
                 if (item.pageNumber === pageNumber) {
-                  item.reject(new Error("Processing aborted"));
+                  item.reject(new AbortError("Processing aborted"));
                   return false;
                 }
                 return true;
@@ -1246,7 +1273,11 @@ export class PDFBatchProcessor {
       );
     } catch (error) {
       logger.error("Error initializing worker", error);
-      throw new Error("Failed to initialize PDF workers. Please try again.");
+      throw new WorkerInitializationError(
+        `Failed to initialize PDF workers: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
 
     const limit = pLimit(this.maxConcurrentFiles);
@@ -1451,7 +1482,7 @@ export class PDFBatchProcessor {
 
       for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
         if (abortSignal.aborted) {
-          throw new Error("Processing aborted");
+          throw new AbortError("Processing aborted");
         }
 
         try {
@@ -1468,7 +1499,7 @@ export class PDFBatchProcessor {
             const delayTime = getExponentialBackoffDelay(2500, attempt);
             await delay(delayTime);
             if (abortSignal.aborted) {
-              throw new Error("Processing aborted");
+              throw new AbortError("Processing aborted");
             }
           }
 
@@ -1492,7 +1523,7 @@ export class PDFBatchProcessor {
           );
 
           if (abortSignal.aborted) {
-            throw new Error("Processing aborted");
+            throw new AbortError("Processing aborted");
           }
 
           callbacks.onPageProcessed(
@@ -1547,7 +1578,7 @@ export class PDFBatchProcessor {
           await delay(delayTime);
 
           if (abortSignal.aborted) {
-            throw new Error("Processing aborted");
+            throw new AbortError("Processing aborted");
           }
         }
       }
@@ -1749,7 +1780,10 @@ function createTimeoutPromise(
       resources.abortHandler = () => {
         if (isPromiseSettled) return;
 
-        safeReject(new Error("Processing aborted"), "Abort signal received");
+        safeReject(
+          new AbortError("Processing aborted"),
+          "Abort signal received"
+        );
       };
 
       if (abortSignal.aborted) {

@@ -27,7 +27,7 @@ export type ProcessingInfo = {
  */
 export function useFileProcessing(
   allowedFileTypes: string[],
-  animateFn?: (filesLength: number) => Promise<void>
+  animateFn?: (files: File[]) => Promise<void>
 ) {
   // Processing state
   const processingRef = useRef(false);
@@ -324,7 +324,7 @@ export function useFileProcessing(
 
     // Animation if provided
     if (animateFn) {
-      await animateFn(sanitizedFiles.length);
+      await animateFn(sanitizedFiles);
     }
 
     console.log("Processing files in queue", sanitizedFiles);

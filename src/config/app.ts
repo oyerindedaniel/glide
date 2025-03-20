@@ -1,4 +1,4 @@
-import { toBytes } from "@/utils/app";
+import { toBytes } from "@/utils/file";
 
 const SCALE_CACHE_SIZE = process.env.NEXT_PUBLIC_SCALE_CACHE_SIZE
   ? parseInt(process.env.NEXT_PUBLIC_SCALE_CACHE_SIZE)
