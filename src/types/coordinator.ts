@@ -1,3 +1,5 @@
+import { CleanupOptions } from "./processor";
+
 export enum CoordinatorMessageType {
   INIT_COORDINATOR = "INIT_COORDINATOR",
   COORDINATOR_READY = "COORDINATOR_READY",
@@ -51,13 +53,7 @@ export interface CleanupMessage extends CoordinatorMessage {
   type: CoordinatorMessageType.CLEANUP;
   clientId?: string;
   requestId?: string;
-  options?: {
-    force?: boolean;
-    silent?: boolean;
-    delayRequestRemoval?: boolean;
-    requestRemovalDelay?: number;
-    closeChannels?: boolean;
-  };
+  options?: CleanupOptions;
   success?: boolean;
   responseRequired?: boolean;
 }

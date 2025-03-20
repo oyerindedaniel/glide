@@ -50,7 +50,7 @@ const pdfDocuments = new Map<string, PDFDocumentProxy>();
 const coordinators = new Map<number, MessagePort>();
 
 // Cache for scale calculations to prevent redundant processing
-// Modified to be client-specific - a map of (clientId -> scale cache map)
+// Client-specific - a map of (clientId -> scale cache map)
 const scaleCache = new Map<string, Map<string, number>>();
 
 // Maximum entries per client's scale cache (from config)
@@ -115,7 +115,7 @@ function calculateOptimalScale(
     logger.log(
       `CACHE HIT ✓ Client: ${clientId}, Key: ${cacheKey}, Value: ${cachedValue}, Cache size: ${clientCache.size}`
     );
-    return cachedValue; // This should exit the function immediately
+    return cachedValue;
   }
 
   logger.log(
@@ -170,7 +170,6 @@ function calculateOptimalScale(
     }
   }
 
-  // Store result in client-specific cache
   clientCache.set(cacheKey, optimalScale);
 
   logger.log(

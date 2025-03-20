@@ -20,6 +20,7 @@ import {
   RegisterWorkerMessage,
   CoordinatorStatusMessage,
   CleanupMessage as CoordinatorCleanupMessage,
+  RegisterCoordinatorMessage,
 } from "@/types/coordinator";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -58,7 +59,7 @@ export class PDFWorkerPool {
   private workers: Worker[] = [];
   private workerCoordinatorChannels: MessageChannel[] = [];
   private availableWorkers: Worker[] = [];
-  private coordinators: MessagePort[] = [];
+  private coordinators: Worker[] = [];
   private coordinatorChannels: MessageChannel[] = [];
   private nextCoordinatorIndex = 0;
   private taskQueue: Array<{
@@ -81,7 +82,7 @@ export class PDFWorkerPool {
 
   private terminationTimeouts: NodeJS.Timeout[] = [];
 
-  private coordinatorHandlers: Map<MessagePort, EventListener> = new Map();
+  private coordinatorHandlers: Map<Worker, EventListener> = new Map();
   private coordinatorStatusInterval: NodeJS.Timeout | null = null;
 
   private constructor(
@@ -116,25 +117,48 @@ export class PDFWorkerPool {
 
     // Create coordinator workers
     for (let i = 0; i < this.coordinatorCount; i++) {
-      const coordinator = new MessageChannel().port1;
-      const initMessage: InitCoordinatorMessage = {
-        type: CoordinatorMessageType.INIT_COORDINATOR,
-        coordinatorId: i,
-      };
+      try {
+        const coordinator = new Worker(
+          new URL("./pdf-coordinator.worker.ts", import.meta.url)
+        );
+        // Create a message channel for this coordinator
+        const channel = new MessageChannel();
 
-      const fallbackHandler = ((
-        e: MessageEvent<CoordinatorFallbackMessage>
-      ) => {
-        this.handleCoordinatorFallbackMessage(e);
-      }) as EventListener;
+        // Set up communication between library worker and coordinator
+        const registerMessage: RegisterCoordinatorMessage = {
+          type: CoordinatorMessageType.REGISTER_COORDINATOR,
+          coordinatorId: i,
+        };
 
-      coordinator.addEventListener("message", fallbackHandler);
-      this.coordinatorHandlers.set(coordinator, fallbackHandler);
+        sharedLibraryWorker.postMessage(registerMessage, [channel.port1]);
 
-      coordinator.start();
-      coordinator.postMessage(initMessage);
+        // Initialize the coordinator with its port and ID
+        const initMessage: InitCoordinatorMessage = {
+          type: CoordinatorMessageType.INIT_COORDINATOR,
+          coordinatorId: i,
+        };
 
-      this.coordinators.push(coordinator);
+        coordinator.postMessage(initMessage, [channel.port2]);
+
+        const fallbackHandler = ((
+          e: MessageEvent<CoordinatorFallbackMessage>
+        ) => {
+          this.handleCoordinatorFallbackMessage(e);
+        }) as EventListener;
+
+        // Set up event listener for fallback messages from coordinator
+        coordinator.addEventListener("message", fallbackHandler);
+
+        this.coordinators.push(coordinator);
+        this.coordinatorChannels.push(channel);
+
+        this.coordinatorHandlers.set(coordinator, fallbackHandler);
+
+        logger.log(`Initialized coordinator worker ${i}`);
+      } catch (error) {
+        logger.error(`Error initializing coordinator worker ${i}:`, error);
+        throw error;
+      }
     }
 
     // Wait for all coordinators to be ready
@@ -697,7 +721,7 @@ export class PDFWorkerPool {
   /**
    * Get the coordinator worker by index
    */
-  public getCoordinatorWorker(index: number): MessagePort | null {
+  public getCoordinatorWorker(index: number): Worker | null {
     if (index < 0 || index >= this.coordinators.length) {
       return null;
     }
@@ -707,7 +731,7 @@ export class PDFWorkerPool {
   /**
    * Get the next available coordinator worker in round-robin fashion
    */
-  public getNextCoordinatorWorker(): MessagePort | null {
+  public getNextCoordinatorWorker(): Worker | null {
     if (this.coordinators.length === 0) return null;
 
     const coordinator = this.coordinators[this.nextCoordinatorIndex];
@@ -1229,7 +1253,6 @@ export class PDFWorkerPool {
                 "message",
                 coordinatorCleanupListener
               );
-              coordinator.close();
             } catch (error) {
               logger.warn(
                 `Error closing coordinator ${index} after cleanup`,
@@ -1274,7 +1297,6 @@ export class PDFWorkerPool {
                 "message",
                 coordinatorCleanupListener
               );
-              coordinator.close();
             } catch (err) {
               logger.warn(
                 `Error closing coordinator ${index} during timeout`,

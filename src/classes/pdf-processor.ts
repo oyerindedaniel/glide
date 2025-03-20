@@ -15,6 +15,7 @@ import {
   isBrowserWithWorker,
   isWindowDefined,
   generateRandomId,
+  getExponentialBackoffDelay,
 } from "@/utils/app";
 import pLimit from "p-limit";
 import { toast } from "sonner";
@@ -223,7 +224,10 @@ export class PDFProcessor {
         );
 
         if (attempts < maxAttempts) {
-          const backoffTime = retryDelayMs * Math.pow(2, attempts - 1);
+          const backoffTime = getExponentialBackoffDelay(
+            retryDelayMs,
+            attempts
+          );
           await delay(backoffTime);
         }
       }
@@ -1173,6 +1177,8 @@ export class PDFBatchProcessor {
       throw new Error("Failed to initialize PDF workers. Please try again.");
     }
 
+    console.log("Processing batch", files.length);
+
     const limit = pLimit(this.maxConcurrentFiles);
 
     const processFile = async (file: File) => {
@@ -1287,7 +1293,6 @@ export class PDFBatchProcessor {
         logger.log(
           `Processing complete for ${file.name}, cleaning up resources`
         );
-
         resolveTimeout();
         processor.cleanup();
       }
@@ -1390,7 +1395,8 @@ export class PDFBatchProcessor {
                 { id: "is-online" }
               );
             }
-            await delay(5000);
+            const delayTime = getExponentialBackoffDelay(2500, attempt);
+            await delay(delayTime);
             if (abortSignal.aborted) {
               throw new Error("Processing aborted");
             }
@@ -1467,7 +1473,7 @@ export class PDFBatchProcessor {
             return true;
           }
 
-          const delayTime = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          const delayTime = getExponentialBackoffDelay(BASE_DELAY_MS, attempt);
           await delay(delayTime);
 
           if (abortSignal.aborted) {
@@ -1680,6 +1686,7 @@ function createTimeoutPromise(
 
     // Listen for cleanup events
     if (isWindowDefined()) {
+      if (!resources.cleanupListener) return;
       resources.cleanupListener = (e: Event) => {
         const event = e as CustomEvent;
         if (event.detail && event.detail.clientId === processorClientId) {
