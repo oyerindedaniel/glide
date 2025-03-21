@@ -56,7 +56,7 @@ const errorMessageMap: Record<ErrorCode, string> = {
 /**
  * Base error class for application-specific errors
  */
-export class AppError extends Error {
+class AppError extends Error {
   public code: ErrorCode;
 
   constructor(message: string, code: ErrorCode = ErrorCode.UNKNOWN_ERROR) {
@@ -69,7 +69,7 @@ export class AppError extends Error {
 /**
  * Base error class for worker-specific errors
  */
-export class WorkerError extends AppError {
+class WorkerError extends AppError {
   constructor(message: string, code: ErrorCode = ErrorCode.WORKER_INIT_ERROR) {
     super(message, code);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -79,7 +79,7 @@ export class WorkerError extends AppError {
 /**
  * Specific error for worker initialization failures
  */
-export class WorkerInitializationError extends WorkerError {
+class WorkerInitializationError extends WorkerError {
   constructor(message: string) {
     super(message, ErrorCode.WORKER_INIT_ERROR);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -89,7 +89,7 @@ export class WorkerInitializationError extends WorkerError {
 /**
  * Specific error for worker timeout failures
  */
-export class WorkerTimeoutError extends WorkerError {
+class WorkerTimeoutError extends WorkerError {
   constructor(message: string) {
     super(message, ErrorCode.WORKER_TIMEOUT);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -99,7 +99,7 @@ export class WorkerTimeoutError extends WorkerError {
 /**
  * Specific error for worker cleanup failures
  */
-export class WorkerCleanupError extends WorkerError {
+class WorkerCleanupError extends WorkerError {
   constructor(message: string) {
     super(message, ErrorCode.WORKER_CLEANUP_ERROR);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -109,7 +109,7 @@ export class WorkerCleanupError extends WorkerError {
 /**
  * Specific error for worker communication failures
  */
-export class WorkerCommunicationError extends WorkerError {
+class WorkerCommunicationError extends WorkerError {
   constructor(message: string) {
     super(message, ErrorCode.WORKER_COMMUNICATION_ERROR);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -119,7 +119,7 @@ export class WorkerCommunicationError extends WorkerError {
 /**
  * Specific error for worker pool failures
  */
-export class WorkerPoolError extends WorkerError {
+class WorkerPoolError extends WorkerError {
   constructor(message: string) {
     super(message, ErrorCode.WORKER_POOL_ERROR);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -129,7 +129,7 @@ export class WorkerPoolError extends WorkerError {
 /**
  * Specific error for operation abortion
  */
-export class AbortError extends AppError {
+class AbortError extends AppError {
   constructor(message: string = "Operation aborted") {
     super(message, ErrorCode.ABORT_ERROR);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -169,3 +169,137 @@ export async function tryCatch<T>(operation: Promise<T>): Promise<Result<T>> {
     };
   }
 }
+
+/**
+ * Normalizes any error value to a proper Error instance
+ *
+ * @param error - Any error value (could be Error, string, number, etc.)
+ * @returns A properly typed Error instance
+ */
+export function normalizeError(error: unknown): Error {
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error(String(error));
+}
+
+/**
+ * Gets a user-friendly message for an error.
+ * Uses the error code message map for AppErrors, or the error message otherwise.
+ *
+ * @param error - Any error value
+ * @returns A user-friendly error message
+ */
+export function getErrorMessage(error: unknown): string {
+  const normalizedError = normalizeError(error);
+
+  if (normalizedError instanceof AppError) {
+    return errorMessageMap[normalizedError.code] || normalizedError.message;
+  }
+
+  return normalizedError.message;
+}
+
+/**
+ * Gets the error code for an error.
+ * Returns UNKNOWN_ERROR for non-AppError instances.
+ *
+ * @param error - Any error value
+ * @returns The error code
+ */
+export function getErrorCode(error: unknown): ErrorCode {
+  const normalizedError = normalizeError(error);
+
+  if (normalizedError instanceof AppError) {
+    return normalizedError.code;
+  }
+
+  return ErrorCode.UNKNOWN_ERROR;
+}
+
+/**
+ * Checks if an error is of a specific error type or any subclass of it
+ */
+export function isErrorType<T extends Error>(
+  error: unknown,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ErrorType: new (...args: any[]) => T
+): error is T {
+  return error instanceof ErrorType;
+}
+
+/**
+ * Determines whether an operation should be retried based on the error type.
+ *
+ * @param error - The error that occurred during the operation
+ * @returns Boolean indicating whether the operation should be retried
+ */
+export function shouldRetry(error: unknown): boolean {
+  const typedError = normalizeError(error);
+
+  // Don't retry if the operation was explicitly aborted
+  if (typedError instanceof AbortError) {
+    return false;
+  }
+
+  // Worker initialization errors might be recoverable
+  if (typedError instanceof WorkerInitializationError) {
+    // Only retry for non-critical initialization errors
+    return (
+      !typedError.message.includes("critical") &&
+      !typedError.message.includes("missing module")
+    );
+  }
+
+  // Worker timeout errors are good candidates for retry
+  if (typedError instanceof WorkerTimeoutError) {
+    return true;
+  }
+
+  // Communication errors might be temporary
+  if (typedError instanceof WorkerCommunicationError) {
+    return true;
+  }
+
+  // Worker cleanup errors shouldn't block retrying
+  if (typedError instanceof WorkerCleanupError) {
+    return true;
+  }
+
+  // For unknown error types, check common patterns in message
+  const message = typedError.message.toLowerCase();
+
+  // Network errors are typically retryable
+  if (
+    message.includes("network") ||
+    message.includes("connection") ||
+    message.includes("timeout")
+  ) {
+    return true;
+  }
+
+  // Memory issues might be resolved after cleanup
+  if (message.includes("memory") || message.includes("allocation")) {
+    return true;
+  }
+
+  // Usually don't retry for worker pool errors (no workers available)
+  if (typedError instanceof WorkerPoolError) {
+    return false;
+  }
+
+  // By default, retry unknown errors
+  return true;
+}
+
+export {
+  AppError,
+  WorkerError,
+  WorkerInitializationError,
+  WorkerTimeoutError,
+  WorkerCleanupError,
+  WorkerCommunicationError,
+  WorkerPoolError,
+  AbortError,
+};

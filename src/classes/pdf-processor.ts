@@ -48,11 +48,8 @@ import { v4 as uuidv4 } from "uuid";
 import {
   WorkerError,
   WorkerInitializationError,
-  WorkerTimeoutError,
-  WorkerCleanupError,
-  WorkerCommunicationError,
-  WorkerPoolError,
   AbortError,
+  normalizeError,
 } from "@/utils/error";
 
 // Check if we're in a browser environment with Web Workers
@@ -228,22 +225,7 @@ export class PDFProcessor {
       try {
         return await operation();
       } catch (error) {
-        let typedError: Error;
-
-        if (error instanceof WorkerInitializationError) {
-          typedError = error;
-        } else if (error instanceof WorkerTimeoutError) {
-          typedError = error;
-        } else if (error instanceof WorkerCleanupError) {
-          typedError = error;
-        } else if (error instanceof WorkerCommunicationError) {
-          typedError = error;
-        } else if (error instanceof WorkerPoolError) {
-          typedError = error;
-        } else {
-          typedError =
-            error instanceof Error ? error : new Error(String(error));
-        }
+        const typedError = normalizeError(error);
 
         if (!shouldRetry(typedError)) {
           throw typedError;
@@ -1284,7 +1266,7 @@ export class PDFBatchProcessor {
 
     const processFile = async (file: File) => {
       if (abortSignal.aborted) {
-        throw new Error("Processing aborted");
+        throw new AbortError("Processing aborted");
       }
 
       const failedPages = new Map<

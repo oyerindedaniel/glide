@@ -102,16 +102,6 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       const defaultTotalPages = 1;
       const defaultMetadata = { size: 0, type: FILE_INPUT_TYPES.PDF };
 
-      // If file exists and has complete data, don't update
-      if (
-        fileExists &&
-        existingFile &&
-        existingFile.size > 0 &&
-        existingMetadata
-      ) {
-        return state;
-      }
-
       const actualTotalPages = totalPages ?? defaultTotalPages;
       const actualMetadata = metadata ?? defaultMetadata;
 

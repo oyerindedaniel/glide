@@ -1,15 +1,20 @@
 /**
- * Converts a file size from bytes to a human-readable format (MB or GB).
+ * Converts a file size from bytes to a human-readable format (KB, MB, GB, or TB).
  *
  * @param {number} bytes - The file size in bytes.
- * @returns {string} - The formatted file size in MB or GB.
+ * @returns {string} - The formatted file size with the appropriate unit.
  */
 export function formatFileSize(bytes: number): string {
-  if (bytes >= FILE_SIZE_UNITS.GB) {
-    return `${fromBytes(bytes, "GB").toFixed(2)} GB`;
-  }
+  if (bytes === 0) return "0 Bytes";
 
-  return `${fromBytes(bytes, "MB").toFixed(2)} MB`;
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+  const value = bytes / Math.pow(k, i);
+  const isWholeNumber = value % 1 === 0;
+
+  return (isWholeNumber ? value : value.toFixed(1)) + " " + sizes[i];
 }
 
 /**

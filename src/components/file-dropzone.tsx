@@ -15,6 +15,7 @@ import { FILE_INPUT_TYPES } from "@/constants/processing";
 import { useShallow } from "zustand/shallow";
 import { useFileProcessing } from "@/hooks/use-file-processing";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
+import FileInfoCard from "./file-info-card";
 
 const ALLOWED_IMAGE_TYPES = [
   FILE_INPUT_TYPES.PNG,
@@ -215,9 +216,10 @@ const UploadArea = React.memo(
       <FileUploadIcons />
       <div className="space-y-2 text-center text-sm mt-5">
         <p className="font-medium">Drag & drop files here</p>
-        <p className="text-sm text-muted-foreground">
-          Supported formats: PNG, JPG, PDF
-        </p>
+        <div className="flex items-center justify-center gap-1.5 text-muted-foreground">
+          <p className="text-sm">Supported formats: PNG, JPG, PDF</p>
+          <FileInfoCard />
+        </div>
       </div>
     </div>
   ))
