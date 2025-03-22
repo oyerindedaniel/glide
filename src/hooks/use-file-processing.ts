@@ -15,6 +15,7 @@ import { useShallow } from "zustand/shallow";
 import { DisplayInfo } from "@/types/processor";
 import { resetPDFWorkerPoolInstance } from "@/utils/pdf-cleanup";
 import logger from "@/utils/logger";
+import { AbortError, isErrorType } from "@/utils/error";
 
 export type ProcessingInfo = {
   fileName: string;
@@ -166,7 +167,12 @@ export function useFileProcessing(
           abortSignal
         );
       } catch (error) {
-        throw error;
+        if (isErrorType(error, AbortError)) {
+          toast.dismiss("file-processing");
+          toast.error("Processing cancelled");
+        } else {
+          throw error;
+        }
       }
     },
     [getDisplayInfo]
@@ -381,7 +387,7 @@ export function useFileProcessing(
         }
         resolve();
       } catch (error) {
-        if ((error as Error).message === "Processing aborted") {
+        if (isErrorType(error, AbortError)) {
           toast.dismiss("file-processing");
           toast.error("Processing cancelled");
         } else {
@@ -410,6 +416,8 @@ export function useFileProcessing(
     });
 
     toast.promise(processPromise, {
+      className:
+        "border-border-success rounded-xl gap-2 text-base text-white font-semibold py-4 px-6",
       loading: "Initializing processor...",
       success: () => "All files processed successfully! 🎉",
       error: (error) => {

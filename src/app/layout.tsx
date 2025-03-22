@@ -3,6 +3,7 @@ import "./globals.css";
 import manrope from "@/assets/fonts";
 import { cn } from "@/lib/utils";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
+import { ToastProvider as Toaster } from "@/components/ui/toast";
 
 export const metadata: Metadata = {
   title: "Glide",
@@ -26,16 +27,17 @@ export default function RootLayout({
         )}
       >
         {children}
+        <Toaster />
         <SonnerToaster
           toastOptions={{
             classNames: {
               toast:
-                "rounded-xl gap-2 text-base text-white font-semibold py-4 px-6 border-none",
+                "rounded-xl gap-2 text-base text-white font-semibold py-4 px-6",
               title: "font-semibold text-background",
               icon: "text-white",
-              success: "bg-green-500",
-              warning: "bg-yellow-500",
-              error: "bg-red-500",
+              success: "bg-success border-border-success",
+              warning: "bg-warning border-border-warning",
+              error: "bg-error border-border-error",
             },
           }}
         />

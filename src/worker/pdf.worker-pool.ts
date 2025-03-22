@@ -909,6 +909,7 @@ export class PDFWorkerPool {
         event: MessageEvent<CoordinatorStatusMessage>
       ) => {
         const data = event.data;
+        // TODO: ensure transfered port is closed
         if (data.type === CoordinatorMessageType.COORDINATOR_STATUS) {
           channel.port1.close();
           resolve(data);

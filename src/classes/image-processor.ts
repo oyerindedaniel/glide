@@ -11,6 +11,7 @@ import {
 } from "@/utils/concurrency";
 import { DEFAULT_MAX_CONCURRENT_FILES } from "@/config/app";
 import logger from "@/utils/logger";
+import { AbortError } from "@/utils/error";
 
 export interface ImageProcessingCallbacks {
   onFileAdd: (
@@ -137,7 +138,7 @@ export class ImageBatchProcessor {
     state: { totalPages: number; processedPages: number }
   ): Promise<boolean> {
     if (abortSignal.aborted) {
-      throw new Error("Processing aborted");
+      throw new AbortError("Processing aborted");
     }
 
     try {
@@ -153,7 +154,7 @@ export class ImageBatchProcessor {
 
       if (abortSignal.aborted) {
         URL.revokeObjectURL(url);
-        throw new Error("Processing aborted");
+        throw new AbortError("Processing aborted");
       }
 
       batchedUpdates(() => {
