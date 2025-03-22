@@ -8,7 +8,7 @@ import {
   Platform,
 } from "@/hooks/use-keyboard-shortcut";
 
-// Define platform-specific symbols for modifier keys
+// Platform-specific symbols for modifier keys
 const MODIFIER_SYMBOLS = {
   mac: {
     meta: "⌘", // Command
@@ -50,8 +50,8 @@ const SPECIAL_KEY_SYMBOLS: Record<string, string> = {
 
 // Context for keyboard shortcut display
 type KeyboardContextType = {
-  platform: "mac" | "windows" | "other";
-  setPlatform: (platform: "mac" | "windows" | "other") => void;
+  platform: Platform;
+  setPlatform: (platform: Platform) => void;
   adaptModifierToPlatform: boolean;
 };
 
@@ -120,7 +120,7 @@ export interface ShortcutGroup {
 const KeyboardRoot = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement> & {
-    initialPlatform?: "mac" | "windows" | "other";
+    initialPlatform?: Platform;
     adaptModifierToPlatform?: boolean;
   }
 >(
@@ -134,9 +134,7 @@ const KeyboardRoot = React.forwardRef<
     },
     ref
   ) => {
-    const [platform, setPlatform] = React.useState<"mac" | "windows" | "other">(
-      initialPlatform
-    );
+    const [platform, setPlatform] = React.useState<Platform>(initialPlatform);
 
     // Detect OS on mount
     React.useEffect(() => {
@@ -387,7 +385,7 @@ KeyboardGroupContent.displayName = "KeyboardGroupContent";
 // Helper to parse a shortcut string with platform adaptation
 export function parseShortcutWithPlatform(
   shortcut: string,
-  platform: "mac" | "windows" | "other",
+  platform: Platform,
   adaptToPlatform: boolean
 ): { modifiers: string[]; mainKey: string } {
   const parts = shortcut.split("+");
