@@ -15,6 +15,7 @@
     forwards;
   --animate-panel-side-out: panel-side-out 0.35s cubic-bezier(0.35, 0, 0.2, 1)
     forwards;
+  --animate-shimmer: shimmer 2s infinite linear;
 
   --font-manrope: "Manrope", serif;
 
@@ -175,6 +176,15 @@
     100% {
       opacity: 0;
       transform: translateY(10px);
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
     }
   }
 }

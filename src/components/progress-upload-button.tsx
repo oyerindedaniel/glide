@@ -33,7 +33,12 @@ export function ProgressUploadButton() {
   );
 
   const { hasProgressUploadBeenOpened, markProgressUploadAsOpened } =
-    useUserPreferencesStore();
+    useUserPreferencesStore(
+      useShallow((state) => ({
+        hasProgressUploadBeenOpened: state.hasProgressUploadBeenOpened,
+        markProgressUploadAsOpened: state.markProgressUploadAsOpened,
+      }))
+    );
 
   const elementRef = useRef<HTMLButtonElement>(null);
   const snapToelementRef = useRef<HTMLDivElement>(null);
