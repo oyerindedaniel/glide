@@ -4,7 +4,7 @@ import {
   GlobalWorkerOptions,
   PDFDocumentProxy,
 } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { tryCatch } from "@/utils/error";
+import { tryCatch, WorkerError, WorkerCommunicationError } from "@/utils/error";
 import {
   WorkerMessageType,
   LibraryWorkerMessageType,
@@ -298,7 +298,9 @@ const processMessage = async (
 
     // For all other message types, validate clientId is present
     if (!clientId) {
-      throw new Error(`Client ID is required for operation type: ${type}`);
+      throw new WorkerCommunicationError(
+        `Client ID is required for operation type: ${type}`
+      );
     }
 
     switch (type) {
@@ -338,7 +340,9 @@ const processMessage = async (
         const pdfDocument = pdfDocuments.get(clientId);
 
         if (!pdfDocument) {
-          throw new Error(`PDF document not found for client: ${clientId}`);
+          throw new WorkerError(
+            `PDF document not found for client: ${clientId}`
+          );
         }
 
         const page = await pdfDocument.getPage(pageNumber);
@@ -382,7 +386,7 @@ const processMessage = async (
           }).promise
         );
 
-        if (error?.raw) throw new Error("Failed to render PDF page.");
+        if (error) throw new WorkerError("Failed to render PDF page.");
 
         // Convert to blob with quality settings
         const blob = await canvasContext.canvas.convertToBlob({
@@ -458,7 +462,7 @@ const processMessage = async (
       }
 
       default:
-        throw new Error(`Unknown message type: ${type}`);
+        throw new WorkerError(`Unknown message type: ${type}`);
     }
   } catch (error) {
     if (targetPort) {

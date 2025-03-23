@@ -181,11 +181,32 @@ export type StandardKey =
   | "="
   | " ";
 
-// Create a mapped type for keyboard shortcuts
-export type KeyboardShortcutString<
-  M extends ModifierKey,
-  K extends string = string
-> = `${M}+${Exclude<K, ModifierKey>}` | Exclude<K, ModifierKey>;
+// Base type - a key without modifiers
+export type BaseKey<K extends string> = Exclude<K, ModifierKey>;
+
+// Modifier combinations (pre-sorted for consistency)
+export type ModifierCombination =
+  | ModifierKey
+  | `alt+ctrl`
+  | `alt+meta`
+  | `alt+shift`
+  | `ctrl+meta`
+  | `ctrl+shift`
+  | `meta+shift`
+  | `alt+ctrl+meta`
+  | `alt+ctrl+shift`
+  | `alt+meta+shift`
+  | `ctrl+meta+shift`
+  | `alt+ctrl+meta+shift`;
+
+// The improved keyboard shortcut string type
+export type KeyboardShortcutString<K extends string = string> =
+  | BaseKey<K>
+  | `${ModifierCombination}+${BaseKey<K>}`;
+
+const test: KeyboardShortcutString<"ctrl+ctrl"> = "ctrl+ctrl";
+
+console.log(test);
 
 // Keyboard shortcut configuration
 export interface KeyboardShortcutConfig<T extends string = string> {

@@ -1,9 +1,51 @@
-/* eslint-disable @typescript-eslint/no-unsafe-function-type */
+import mitt, { Emitter } from "mitt";
+import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
+import { ProcessingStatus } from "@/store/processed-files";
+
+type FileAddPayload = {
+  fileName: string;
+  totalPages: number;
+  metadata: { size: number; type: string };
+};
+
+type FileStatusPayload = {
+  fileName: string;
+  status: ProcessingStatus;
+};
+
+type PageProcessedPayload = {
+  fileName: string;
+  pageNumber: number;
+  url: string | null;
+  status: ProcessingStatus;
+  errorReason?: string;
+};
+
+type ProcessingProgressPayload = {
+  progress: number;
+  total: number;
+};
+
+type ProcessingCompletePayload = {
+  success: boolean;
+  error?: Error;
+};
+
+type FileProcessingEvents = {
+  [FILE_PROCESSING_EVENTS.FILE_ADD]: FileAddPayload;
+  [FILE_PROCESSING_EVENTS.FILE_STATUS]: FileStatusPayload;
+  [FILE_PROCESSING_EVENTS.PAGE_PROCESSED]: PageProcessedPayload;
+  [FILE_PROCESSING_EVENTS.PROCESSING_PROGRESS]: ProcessingProgressPayload;
+  [FILE_PROCESSING_EVENTS.PROCESSING_COMPLETE]: ProcessingCompletePayload;
+};
+
 class FileProcessingEmitter {
   private static instance: FileProcessingEmitter;
-  private listeners: Map<string, Set<Function>> = new Map();
+  private emitter: Emitter<FileProcessingEvents>;
 
-  private constructor() {}
+  private constructor() {
+    this.emitter = mitt<FileProcessingEvents>();
+  }
 
   public static getInstance(): FileProcessingEmitter {
     if (!FileProcessingEmitter.instance) {
@@ -12,20 +54,34 @@ class FileProcessingEmitter {
     return FileProcessingEmitter.instance;
   }
 
-  public on(event: string, listener: Function): void {
-    if (!this.listeners.has(event)) {
-      this.listeners.set(event, new Set());
-    }
-    this.listeners.get(event)?.add(listener);
+  /**
+   * Subscribe to an event
+   */
+  public on<K extends keyof FileProcessingEvents>(
+    event: K,
+    handler: (data: FileProcessingEvents[K]) => void
+  ): void {
+    this.emitter.on(event, handler);
   }
 
-  public off(event: string, listener: Function): void {
-    this.listeners.get(event)?.delete(listener);
+  /**
+   * Unsubscribe from an event
+   */
+  public off<K extends keyof FileProcessingEvents>(
+    event: K,
+    handler: (data: FileProcessingEvents[K]) => void
+  ): void {
+    this.emitter.off(event, handler);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  public emit(event: string, ...args: any[]): void {
-    this.listeners.get(event)?.forEach((listener) => listener(...args));
+  /**
+   * Emit an event with typed data
+   */
+  public emit<K extends keyof FileProcessingEvents>(
+    event: K,
+    data: FileProcessingEvents[K]
+  ): void {
+    this.emitter.emit(event, data);
   }
 }
 

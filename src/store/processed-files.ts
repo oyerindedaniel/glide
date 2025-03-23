@@ -7,6 +7,7 @@ enum ProcessingStatus {
   PROCESSING = "processing",
   COMPLETED = "completed",
   FAILED = "failed",
+  ABORTED = "aborted",
 }
 
 /**
@@ -15,6 +16,7 @@ enum ProcessingStatus {
 export interface PageStatus {
   url: string;
   status: ProcessingStatus;
+  errorReason?: string;
 }
 
 /**
@@ -33,6 +35,7 @@ interface ProcessedFileState {
     pageNumber: number;
     url: string;
     status: ProcessingStatus;
+    errorReason?: string;
     fileType: string;
   }>;
 
@@ -46,12 +49,14 @@ interface ProcessedFileState {
     fileName: string,
     pageNumber: number,
     url: string,
-    status?: ProcessingStatus
+    status?: ProcessingStatus,
+    errorReason?: string
   ) => void;
   setPageStatus: (
     fileName: string,
     pageNumber: number,
-    status: ProcessingStatus
+    status: ProcessingStatus,
+    errorReason?: string
   ) => void;
   setFileStatus: (fileName: string, status: ProcessingStatus) => void;
   setTotalFiles: (total: number) => void;
@@ -80,6 +85,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     [ProcessingStatus.PROCESSING]: 0,
     [ProcessingStatus.COMPLETED]: 0,
     [ProcessingStatus.FAILED]: 0,
+    [ProcessingStatus.ABORTED]: 0,
   },
   allPages: [],
 
@@ -171,7 +177,8 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     fileName,
     pageNumber,
     url,
-    status = ProcessingStatus.COMPLETED
+    status = ProcessingStatus.COMPLETED,
+    errorReason?: string
   ) => {
     set((state) => {
       const newProcessedFiles = new Map(state.processedFiles);
@@ -179,7 +186,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
         newProcessedFiles.get(fileName) ?? new Map<number, PageStatus>();
       const newFilePages = new Map<number, PageStatus>(filePages);
 
-      newFilePages.set(pageNumber, { url, status });
+      newFilePages.set(pageNumber, { url, status, errorReason });
       newProcessedFiles.set(fileName, newFilePages);
 
       return { processedFiles: newProcessedFiles };
@@ -192,13 +199,17 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
   /**
    * Updates the status of a specific page within a file.
    */
-  setPageStatus: (fileName, pageNumber, status) => {
+  setPageStatus: (fileName, pageNumber, status, errorReason?: string) => {
     set((state) => {
       const newProcessedFiles = new Map(state.processedFiles);
       const filePages = newProcessedFiles.get(fileName);
       if (filePages && filePages.has(pageNumber)) {
         const page = filePages.get(pageNumber)!;
-        filePages.set(pageNumber, { ...page, status });
+        filePages.set(pageNumber, {
+          ...page,
+          status,
+          errorReason: errorReason || page.errorReason,
+        });
         newProcessedFiles.set(fileName, filePages);
       }
       return { processedFiles: newProcessedFiles };
@@ -243,6 +254,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
       [ProcessingStatus.PROCESSING]: 0,
       [ProcessingStatus.COMPLETED]: 0,
       [ProcessingStatus.FAILED]: 0,
+      [ProcessingStatus.ABORTED]: 0,
     };
 
     fileStatus.forEach((status) => {
@@ -276,17 +288,20 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
     const { processedFiles, fileMetadata } = get();
     const pages = Array.from(processedFiles.entries()).flatMap(
       ([fileName, pageMap]) =>
-        Array.from(pageMap.entries()).map(([pageNumber, { url, status }]) => {
-          const fileType = fileMetadata.get(fileName)?.type || "";
+        Array.from(pageMap.entries()).map(
+          ([pageNumber, { url, status, errorReason }]) => {
+            const fileType = fileMetadata.get(fileName)?.type || "";
 
-          return {
-            fileName,
-            pageNumber,
-            url,
-            status,
-            fileType,
-          };
-        })
+            return {
+              fileName,
+              pageNumber,
+              url,
+              status,
+              errorReason,
+              fileType,
+            };
+          }
+        )
     );
 
     set({ allPages: pages });
@@ -314,6 +329,7 @@ const useProcessedFilesStore = create<ProcessedFileState>((set, get) => ({
           [ProcessingStatus.PROCESSING]: 0,
           [ProcessingStatus.COMPLETED]: 0,
           [ProcessingStatus.FAILED]: 0,
+          [ProcessingStatus.ABORTED]: 0,
         },
       };
     });

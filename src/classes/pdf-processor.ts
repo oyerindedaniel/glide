@@ -50,7 +50,25 @@ import {
   WorkerInitializationError,
   AbortError,
   normalizeError,
+  ErrorCode,
+  WorkerCommunicationError,
+  tryCatch,
+  isErrorType,
+  SystemError,
+  isWorkerErrorType,
+  errorMessageMap,
+  getErrorMessage,
 } from "@/utils/error";
+import {
+  PDFError,
+  PDFAllPagesFailedError,
+  PDFSomePagesFailedError,
+  determinePDFErrorCode,
+} from "@/utils/pdf-errors";
+import { BatchProcessingError, ErrorRecord } from "@/utils/pdf-errors";
+import { formatFileSize } from "@/utils/file";
+import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
+import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
 
 // Check if we're in a browser environment with Web Workers
 const isBrowser = isBrowserWithWorker();
@@ -122,7 +140,8 @@ export class PDFProcessor {
   // Unique client ID for this processor instance
   private clientId: string;
   // Track processing state for recovery purposes
-  private isAborted: boolean = false;
+  public isAborted: boolean = false;
+  public isCleanedUp: boolean = false;
   private expectingResponses: boolean = false;
   private onStatusUpdate?: (status: {
     status: ProcessingStatus;
@@ -250,7 +269,7 @@ export class PDFProcessor {
 
     throw (
       lastError ||
-      new Error(`${operationName} failed after ${maxAttempts} attempts`)
+      new WorkerError(`${operationName} failed after ${maxAttempts} attempts`)
     );
   }
 
@@ -307,11 +326,11 @@ export class PDFProcessor {
       logger.error("Failed to initialize worker:", error);
       if (this.onError) {
         this.onError(
-          error instanceof WorkerError
+          isErrorType(error, WorkerError)
             ? error
             : new WorkerInitializationError(
                 `Failed to initialize worker: ${
-                  error instanceof Error ? error.message : String(error)
+                  isErrorType(error, Error) ? error.message : String(error)
                 }`
               )
         );
@@ -604,8 +623,9 @@ export class PDFProcessor {
     }) => void
   ): Promise<{ totalPages: number; status: ProcessingStatus }> {
     if (!isBrowser) {
-      throw new Error(
-        "PDF processing is only available in browser environments"
+      throw new WorkerError(
+        "PDF processing is only available in browser environments",
+        ErrorCode.WORKER_ERROR
       );
     }
 
@@ -634,7 +654,9 @@ export class PDFProcessor {
           if (!this.worker) {
             await this.initializeWorker();
             if (!this.worker) {
-              throw new Error("Failed to initialize worker");
+              throw new WorkerInitializationError(
+                "Failed to initialize worker"
+              );
             }
           }
 
@@ -661,7 +683,7 @@ export class PDFProcessor {
                 this.worker!.removeEventListener("message", onMessage);
                 this.expectingResponses = false;
 
-                const error = new Error(e.data.error);
+                const error = normalizeError(e.data.error);
 
                 if (this.onStatusUpdate) {
                   this.onStatusUpdate({
@@ -721,8 +743,9 @@ export class PDFProcessor {
     dimensions: { width: number; height: number };
   }> {
     if (!isBrowser) {
-      throw new Error(
-        "PDF processing is only available in browser environments"
+      throw new WorkerError(
+        "PDF processing is only available in browser environments",
+        ErrorCode.WORKER_ERROR
       );
     }
 
@@ -731,7 +754,9 @@ export class PDFProcessor {
     }
 
     if (!this.expectingResponses) {
-      throw new Error("Processor is no longer expecting responses");
+      throw new WorkerCommunicationError(
+        "Processor is no longer expecting responses"
+      );
     }
 
     notifyProcessingActivity(this.clientId);
@@ -757,7 +782,7 @@ export class PDFProcessor {
           if (!this.worker) {
             await this.initializeWorker();
             if (!this.worker) {
-              throw new Error(
+              throw new WorkerInitializationError(
                 "Failed to initialize worker for page processing"
               );
             }
@@ -770,7 +795,11 @@ export class PDFProcessor {
             }
 
             if (!this.expectingResponses) {
-              reject(new Error("Processor is no longer expecting responses"));
+              reject(
+                new WorkerCommunicationError(
+                  "Processor is no longer expecting responses"
+                )
+              );
               return;
             }
 
@@ -846,6 +875,7 @@ export class PDFProcessor {
 
     if (this.worker) {
       this.cleanupWorker();
+      this.isCleanedUp = true;
     }
 
     if (this.abortSignal) {
@@ -872,9 +902,9 @@ export class PDFProcessor {
    * This ensures the cleanup message is sent before releasing the worker
    */
   private cleanupWorker(): void {
-    if (!this.worker) return;
-
-    this.sendWorkerMessageWithRelease(WorkerMessageType.Cleanup);
+    if (this.worker) {
+      this.sendWorkerMessageWithRelease(WorkerMessageType.Cleanup);
+    }
   }
 
   /**
@@ -1210,31 +1240,18 @@ export class PDFBatchProcessor {
    */
   public async processBatch(
     files: File[],
-    callbacks: {
-      onFileAdd: (
-        fileName: string,
-        totalPages: number,
-        metadata: { size: number; type: string }
-      ) => void;
-      onFileStatus: (fileName: string, status: ProcessingStatus) => void;
-      onPageProcessed: (
-        fileName: string,
-        pageNumber: number,
-        url: string | null,
-        status: ProcessingStatus
-      ) => void;
-      displayInfo: DisplayInfo;
-    },
+    displayInfo: DisplayInfo,
     abortSignal: AbortSignal
   ): Promise<void> {
     if (!isBrowser) {
-      throw new Error(
-        "PDF processing is only available in browser environments"
+      throw new WorkerError(
+        "PDF processing is only available in browser environments",
+        ErrorCode.WORKER_ERROR
       );
     }
 
-    try {
-      const workerPool = await PDFWorkerPool.getInstance({
+    const { data: workerPool, error: workerPoolError } = await tryCatch(
+      PDFWorkerPool.getInstance({
         detectOptimalConcurrency: true,
         concurrencyOptions: {
           customConcurrency: this.usedOptimalConcurrency
@@ -1244,38 +1261,64 @@ export class PDFBatchProcessor {
         coordinatorCount: this.usedOptimalConcurrency
           ? calculateOptimalCoordinatorCount(this.maxConcurrentFiles)
           : undefined,
-      });
+      })
+    );
 
-      const poolConfig = workerPool.getPoolConfiguration();
-      logger.log(
-        `PDF Batch Processor: ${this.maxConcurrentFiles} concurrent files` +
-          (this.usedOptimalConcurrency ? " (auto-detected)" : "") +
-          `, Worker Pool: ${poolConfig.maxWorkers} workers, ${poolConfig.coordinatorCount} coordinators` +
-          (poolConfig.usedOptimalDetection ? " (auto-detected)" : "")
-      );
-    } catch (error) {
-      logger.error("Error initializing worker", error);
-      throw new WorkerInitializationError(
-        `Failed to initialize PDF workers: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`
-      );
+    if (workerPoolError) {
+      if (isWorkerErrorType(workerPoolError.raw)) {
+        logger.error(`Failed to initialize PDF workers: ${workerPoolError}`);
+        throw new SystemError();
+      }
+
+      throw workerPoolError.raw;
     }
+
+    const poolConfig = workerPool.getPoolConfiguration();
+    logger.log(
+      `PDF Batch Processor: ${this.maxConcurrentFiles} concurrent files` +
+        (this.usedOptimalConcurrency ? " (auto-detected)" : "") +
+        `, Worker Pool: ${poolConfig.maxWorkers} workers, ${poolConfig.coordinatorCount} coordinators` +
+        (poolConfig.usedOptimalDetection ? " (auto-detected)" : "")
+    );
 
     const limit = pLimit(this.maxConcurrentFiles);
 
+    // Controller to allow aborting all concurrent operations
+    const abortController = new AbortController();
+    const localAbortSignal = abortController.signal;
+
+    // Local abort controller linked to the provided abort signal
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", () => {
+        logger.log(
+          "External abort signal detected, aborting all PDF processing"
+        );
+        abortController.abort();
+      });
+    }
+
+    // Active processors for cleanup
+    const activeProcessors: PDFProcessor[] = [];
+
     const processFile = async (file: File) => {
-      if (abortSignal.aborted) {
+      if (localAbortSignal.aborted) {
+        logger.log(`Skipping processing of ${file.name} due to abort`);
         throw new AbortError("Processing aborted");
       }
 
       const failedPages = new Map<
         string,
-        { pageNumber: number; attempts: number }[]
+        {
+          pageNumber: number;
+          attempts: number;
+          reason?: string;
+          code?: ErrorCode;
+        }[]
       >();
 
       const processorOptions = this.getProcessorOptionsForBatch(files.length);
-      const processor = new PDFProcessor(processorOptions, abortSignal);
+      const processor = new PDFProcessor(processorOptions, localAbortSignal);
+      activeProcessors.push(processor);
 
       const processorClientId = processor.getClientId();
 
@@ -1283,12 +1326,16 @@ export class PDFBatchProcessor {
 
       let resolveTimeout: () => void = () => {};
 
+      const abortListener = () => {
+        processor.abort();
+      };
+
       try {
         const result = createTimeoutPromise(
           file.name,
           file.size,
           processorClientId,
-          abortSignal
+          localAbortSignal
         );
 
         const timeoutPromise = result.timeoutPromise;
@@ -1298,23 +1345,27 @@ export class PDFBatchProcessor {
           logger.error(`Timeout monitor detected issue: ${error.message}`);
         });
 
-        // (await PDFWorkerPool.getInstance()).trackClient(processorClientId);
+        const { data: processFileResult, error: processFileError } =
+          await tryCatch(processor.processFile(file));
 
-        const initResult = await processor.processFile(file);
+        if (processFileError) {
+          throw processFileError.raw;
+        }
 
-        const { totalPages, status } = initResult;
+        const { totalPages } = processFileResult;
 
-        const abortListener = () => {
-          processor.abort();
-        };
-        abortSignal.addEventListener("abort", abortListener);
+        localAbortSignal.addEventListener("abort", abortListener);
 
         batchedUpdates(() => {
-          callbacks.onFileAdd(file.name, totalPages, {
-            size: file.size,
-            type: file.type,
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_ADD, {
+            fileName: file.name,
+            totalPages,
+            metadata: { size: file.size, type: file.type },
           });
-          callbacks.onFileStatus(file.name, status);
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+            fileName: file.name,
+            status: ProcessingStatus.PROCESSING,
+          });
         });
 
         logger.log(
@@ -1323,89 +1374,208 @@ export class PDFBatchProcessor {
 
         notifyProcessingActivity(processorClientId);
 
-        const pageResults = await this.processAllPagesWithRetry(
-          file.name,
-          totalPages,
-          processor,
-          {
-            ...callbacks,
-            displayInfo: callbacks.displayInfo,
-          },
-          abortSignal,
-          failedPages
-        );
-
-        notifyProcessingActivity(processorClientId);
-
-        logger.log(
-          `Finished processing all pages for ${file.name}, result count: ${pageResults.length}`
-        );
-
-        const hasPageFailure = pageResults.some(
-          (result) =>
-            result.status === "rejected" ||
-            (result.status === "fulfilled" && result.value === true)
-        );
-
-        callbacks.onFileStatus(
-          file.name,
-          hasPageFailure ? ProcessingStatus.FAILED : ProcessingStatus.COMPLETED
-        );
-
-        const failedPagesCount = pageResults.filter(
-          (result) =>
-            result.status === "rejected" ||
-            (result.status === "fulfilled" && result.value === true)
-        ).length;
-
-        if (failedPagesCount === totalPages) {
-          throw new Error(
-            `Failed to process all pages in "${file.name}". Please try again.`
+        try {
+          await this.processAllPagesWithRetry(
+            file.name,
+            totalPages,
+            processor,
+            displayInfo,
+            localAbortSignal,
+            failedPages
           );
+
+          if (localAbortSignal.aborted) {
+            throw new AbortError("Processing aborted");
+          }
+
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+            fileName: file.name,
+            status: ProcessingStatus.COMPLETED,
+          });
+        } catch (error) {
+          if (isErrorType(error, AbortError)) {
+            if (!localAbortSignal.aborted) {
+              logger.log(
+                `Abort detected in ${file.name}, aborting all processing`
+              );
+              abortController.abort();
+
+              for (const proc of activeProcessors) {
+                if (proc !== processor && !proc.isAborted) {
+                  proc.abort();
+                }
+              }
+            }
+
+            throw error;
+          }
+
+          if (isErrorType(error, PDFError)) {
+            throw error;
+          }
+
+          logger.error(
+            `Error processing file ${file.name}:`,
+            normalizeError(error)
+          );
+          throw new SystemError();
         }
 
-        abortSignal.removeEventListener("abort", abortListener);
-
         notifyProcessingActivity(processorClientId);
-
         return processor;
       } catch (error) {
-        callbacks.onFileStatus(file.name, ProcessingStatus.FAILED);
-        throw error;
+        if (isErrorType(error, AbortError)) {
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+            fileName: file.name,
+            status: ProcessingStatus.ABORTED,
+          });
+
+          if (!localAbortSignal.aborted) {
+            logger.log(
+              `Abort detected in ${file.name}, aborting all processing`
+            );
+            abortController.abort();
+
+            for (const proc of activeProcessors) {
+              if (proc !== processor && !proc.isAborted) {
+                proc.abort();
+              }
+            }
+          }
+
+          throw error;
+        }
+
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+          fileName: file.name,
+          status: ProcessingStatus.FAILED,
+        });
+
+        if (isErrorType(error, PDFError)) {
+          if (!error.fileName) {
+            error.fileName = file.name;
+          }
+          throw error;
+        } else {
+          throw BatchProcessingError.fromError(file.name, error);
+        }
       } finally {
+        localAbortSignal.removeEventListener("abort", abortListener);
         logger.log(
           `Processing complete for ${file.name}, cleaning up resources`
         );
         resolveTimeout();
         processor.cleanup();
+
+        const index = activeProcessors.indexOf(processor);
+        if (index > -1) {
+          activeProcessors.splice(index, 1);
+        }
       }
     };
 
-    const processingPromises = files.map((file) =>
-      limit(() => processFile(file))
-    );
-
-    const results = await Promise.allSettled(processingPromises);
-
-    const errors = results.filter((r) => r.status === "rejected");
-    if (errors.length > 0) {
-      errors.forEach((error, index) => {
-        if (error.status === "rejected") {
-          const fileName =
-            files[
-              results.findIndex(
-                (r) =>
-                  r.status === "rejected" &&
-                  errors.indexOf(r as PromiseRejectedResult) === index
-              )
-            ]?.name || "unknown";
-          logger.error(`Error processing file ${fileName}:`, error.reason);
-        }
-      });
-
-      throw new Error(
-        "One or more files failed during processing. Check file panel for more details."
+    try {
+      const processingPromises = files.map((file) =>
+        limit(() => processFile(file))
       );
+
+      const results = await Promise.allSettled(processingPromises);
+      const hasErrors = results.some((result) => result.status === "rejected");
+
+      if (hasErrors) {
+        // Group errors by file
+        const fileErrors: Record<string, unknown> = {};
+
+        let abortDetected = false;
+        let pdfErrorCount = 0;
+        let allPagesFailedCount = 0;
+        let firstPDFError: PDFError | null = null;
+        let batchProcessingErrorDetected = false;
+        let firstBatchProcessingError: BatchProcessingError | null = null;
+
+        results.forEach((result, index) => {
+          if (result.status === "rejected") {
+            const fileName = files[index]?.name || "unknown";
+            const error = result.reason as unknown;
+
+            logger.error(
+              `Error processing file ${fileName}:`,
+              normalizeError(error)
+            );
+
+            // Checks for abort first as highest priority
+            if (isErrorType(error, AbortError)) {
+              abortDetected = true;
+            } else if (isErrorType(error, PDFError)) {
+              pdfErrorCount++;
+              if (!firstPDFError) {
+                firstPDFError = error;
+              }
+              if (isErrorType(error, PDFAllPagesFailedError)) {
+                allPagesFailedCount++;
+              }
+            } else if (isErrorType(error, BatchProcessingError)) {
+              batchProcessingErrorDetected = true;
+              if (!firstBatchProcessingError) {
+                firstBatchProcessingError = error;
+              }
+            }
+
+            // Group by file
+            fileErrors[fileName] = error;
+          }
+        });
+
+        // Handles errors in priority order:
+        // 1. Abort error (highest priority)
+        // 2. PDF errors
+        // 3. Existing BatchProcessingError instances
+        // 4. Other errors (create new generic batch error)
+
+        if (abortDetected) {
+          throw new AbortError("Processing aborted by user");
+        }
+
+        if (pdfErrorCount > 0) {
+          if (allPagesFailedCount === pdfErrorCount && firstPDFError) {
+            throw firstPDFError;
+          }
+
+          throw new PDFError(
+            `Failed to process ${pdfErrorCount} PDF file(s). Check the upload panel for more details.`,
+            ErrorCode.PDF_BATCH_FAILURE
+          );
+        }
+
+        if (batchProcessingErrorDetected && firstBatchProcessingError) {
+          throw firstBatchProcessingError;
+        }
+
+        const errorRecords: ErrorRecord[] = Object.entries(fileErrors).map(
+          ([fileName, error]) =>
+            BatchProcessingError.createErrorRecord(fileName, error)
+        );
+
+        throw BatchProcessingError.fromErrors(errorRecords);
+      }
+    } catch (error) {
+      if (!localAbortSignal.aborted && isErrorType(error, AbortError)) {
+        abortController.abort();
+      }
+
+      for (const processor of activeProcessors) {
+        if (localAbortSignal.aborted && !processor.isAborted) {
+          processor.abort();
+        }
+      }
+
+      for (const processor of activeProcessors) {
+        if (!processor.isCleanedUp) {
+          processor.cleanup();
+        }
+      }
+
+      throw error;
     }
   }
 
@@ -1435,17 +1605,17 @@ export class PDFBatchProcessor {
     fileName: string,
     totalPages: number,
     processor: PDFProcessor,
-    callbacks: {
-      onPageProcessed: (
-        fileName: string,
-        pageNumber: number,
-        url: string | null,
-        status: ProcessingStatus
-      ) => void;
-      displayInfo?: DisplayInfo;
-    },
+    displayInfo: DisplayInfo,
     abortSignal: AbortSignal,
-    failedPages: Map<string, { pageNumber: number; attempts: number }[]>
+    failedPages: Map<
+      string,
+      {
+        pageNumber: number;
+        attempts: number;
+        reason?: string;
+        code?: ErrorCode;
+      }[]
+    >
   ) {
     function isOnline() {
       return navigator.onLine;
@@ -1453,50 +1623,85 @@ export class PDFBatchProcessor {
 
     const processorClientId = processor.getClientId();
 
-    async function processPageWithRetry(pageNumber: number): Promise<boolean> {
+    async function processPageWithRetry(pageNumber: number): Promise<void> {
       notifyProcessingActivity(processorClientId);
 
       if (!failedPages.has(fileName)) {
         failedPages.set(fileName, []);
       }
 
-      logger.log(`Starting processing for ${fileName} page ${pageNumber}`);
+      let currentAttempt = 1;
+      let lastError: Error | null = null;
 
-      for (let attempt = 1; attempt <= MAX_PAGE_RETRIES; attempt++) {
-        if (abortSignal.aborted) {
-          throw new AbortError("Processing aborted");
-        }
-
+      while (currentAttempt <= MAX_PAGE_RETRIES) {
         try {
+          if (abortSignal.aborted) {
+            throw new AbortError("Processing aborted");
+          }
+
+          const pageAttempts = failedPages
+            .get(fileName)!
+            .find((p) => p.pageNumber === pageNumber);
+
+          // If we already exceeded max retries, fail fast
+          if (pageAttempts && pageAttempts.attempts >= MAX_PAGE_RETRIES) {
+            const errorMsg =
+              pageAttempts.reason ||
+              `Failed to process page ${pageNumber} after ${MAX_PAGE_RETRIES} attempts`;
+            fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.PAGE_PROCESSED, {
+              fileName,
+              pageNumber,
+              url: null,
+              status: ProcessingStatus.FAILED,
+              errorReason: errorMsg,
+            });
+            throw new PDFError(
+              errorMsg,
+              pageAttempts?.code || ErrorCode.PDF_PROCESSING_FAILED,
+              {
+                pageNumber,
+                fileName,
+              }
+            );
+          }
+
+          // Wait until we're online
           while (!isOnline()) {
             logger.warn(
               `User offline. Pausing retries for ${fileName} page ${pageNumber}`
             );
-            if (attempt > 1) {
+            if (pageAttempts && pageAttempts.attempts > 1) {
               toast.warning(
                 `User offline. Pausing retries for ${fileName} page ${pageNumber}`,
                 { id: "is-online" }
               );
             }
-            const delayTime = getExponentialBackoffDelay(2500, attempt);
+            const delayTime = getExponentialBackoffDelay(
+              2500,
+              pageAttempts ? pageAttempts.attempts : currentAttempt
+            );
             await delay(delayTime);
             if (abortSignal.aborted) {
               throw new AbortError("Processing aborted");
             }
           }
 
-          callbacks.onPageProcessed(
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.PAGE_PROCESSED, {
             fileName,
             pageNumber,
-            null,
-            ProcessingStatus.PROCESSING
-          );
+            url: null,
+            status: ProcessingStatus.PROCESSING,
+          });
 
           logger.log(`Calling getPage for ${fileName} page ${pageNumber}`);
-          const data = await processor.getPage(
-            pageNumber,
-            callbacks.displayInfo
+          const { data, error: getPageError } = await tryCatch(
+            processor.getPage(pageNumber, displayInfo)
           );
+
+          if (getPageError) {
+            throw getPageError.raw;
+          }
+
           logger.log(
             `Finished getPage for ${fileName} page ${pageNumber}, got URL: ${data.url.substring(
               0,
@@ -1508,12 +1713,12 @@ export class PDFBatchProcessor {
             throw new AbortError("Processing aborted");
           }
 
-          callbacks.onPageProcessed(
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.PAGE_PROCESSED, {
             fileName,
             pageNumber,
-            data.url,
-            ProcessingStatus.COMPLETED
-          );
+            url: data.url,
+            status: ProcessingStatus.COMPLETED,
+          });
 
           const pageRetries = failedPages.get(fileName)!;
           const pageRetryIndex = pageRetries.findIndex(
@@ -1524,51 +1729,147 @@ export class PDFBatchProcessor {
           }
 
           logger.log(`Successfully processed ${fileName} page ${pageNumber}`);
-          return false;
-        } catch (error) {
-          const isProduction = process.env.NODE_ENV === "production";
+          return;
+        } catch (error: unknown) {
+          if (isErrorType(error, AbortError) || abortSignal.aborted) {
+            throw new AbortError("Processing aborted");
+          }
 
-          logger.warn(
-            `Page ${pageNumber} of ${fileName} failed (Attempt: ${attempt})`
+          const errorCode = determinePDFErrorCode(error);
+
+          // reason for this so pdf error from pdfjs-dist library are handled with a unified for error code and error message
+          // note this is not the throw error, that is handled above
+          const errorMessage = getErrorMessage(
+            error,
+            () => errorMessageMap[errorCode]
           );
 
           const pageRetries = failedPages.get(fileName)!;
-          const existingPage = pageRetries.find(
+          const existingRetry = pageRetries.find(
             (p) => p.pageNumber === pageNumber
           );
 
-          if (existingPage) {
-            existingPage.attempts++;
+          if (existingRetry) {
+            existingRetry.attempts = currentAttempt;
+            existingRetry.reason = errorMessage;
           } else {
-            pageRetries.push({ pageNumber, attempts: 1 });
-          }
-
-          if (attempt === MAX_PAGE_RETRIES) {
-            if (isProduction) {
-              logger.error(error);
-            }
-            callbacks.onPageProcessed(
-              fileName,
+            pageRetries.push({
               pageNumber,
-              null,
-              ProcessingStatus.FAILED
+              attempts: currentAttempt,
+              reason: errorMessage,
+              code: errorCode,
+            });
+          }
+
+          logger.error(
+            `Error processing page ${pageNumber} of ${fileName} (attempt ${currentAttempt}/${MAX_PAGE_RETRIES}):`,
+            error
+          );
+
+          lastError = normalizeError(error);
+
+          // If we still have retries left, delay and continue the loop
+          if (currentAttempt < MAX_PAGE_RETRIES) {
+            const delayMs = getExponentialBackoffDelay(
+              BASE_DELAY_MS,
+              currentAttempt
             );
-            return true;
+            await delay(delayMs);
+            currentAttempt++;
+            continue;
           }
 
-          const delayTime = getExponentialBackoffDelay(BASE_DELAY_MS, attempt);
-          await delay(delayTime);
+          // We've exhausted retries
+          fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.PAGE_PROCESSED, {
+            fileName,
+            pageNumber,
+            url: null,
+            status: ProcessingStatus.FAILED,
+            errorReason: errorMessage,
+          });
 
-          if (abortSignal.aborted) {
-            throw new AbortError("Processing aborted");
-          }
+          throw new PDFError(errorMessage, errorCode, {
+            pageNumber,
+            fileName,
+          });
         }
       }
-      return true;
+
+      // This should not be reached
+      if (lastError) {
+        logger.error(
+          `Failed to process page ${pageNumber} of ${fileName} (unexpected condition):`,
+          lastError
+        );
+        throw lastError;
+      }
+
+      throw new PDFError(
+        `Failed to process page ${pageNumber} of ${fileName} (unexpected condition)`,
+        ErrorCode.PDF_PROCESSING_FAILED,
+        {
+          pageNumber,
+          fileName,
+        }
+      );
     }
 
     const pageNumbers = Array.from({ length: totalPages }, (_, i) => i + 1);
-    return Promise.allSettled(pageNumbers.map(processPageWithRetry));
+    const results = await Promise.allSettled(
+      pageNumbers.map(processPageWithRetry)
+    );
+
+    let abortDetected = false;
+    for (const result of results) {
+      if (
+        result.status === "rejected" &&
+        isErrorType(result.reason, AbortError)
+      ) {
+        abortDetected = true;
+        break;
+      }
+    }
+
+    if (abortDetected) {
+      throw new AbortError("Processing aborted");
+    }
+
+    // Collect all failed pages
+    const failedPagesMap = new Map<number, string>();
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        const pageNumber = index + 1;
+        const error = result.reason;
+        const errorMessage = normalizeError(error).message;
+        failedPagesMap.set(pageNumber, errorMessage);
+      }
+    });
+
+    if (failedPagesMap.size > 0) {
+      // If all pages failed
+      if (failedPagesMap.size === totalPages) {
+        logger.error(
+          `All ${totalPages} pages failed to process in file ${fileName}`,
+          failedPagesMap
+        );
+        throw new PDFAllPagesFailedError(
+          `All ${totalPages} pages failed to process in file ${fileName}`,
+          { fileName, failedPages: failedPagesMap }
+        );
+      }
+
+      // If some pages failed
+      logger.error(
+        `Some pages failed to process in file ${fileName}`,
+        failedPagesMap
+      );
+      throw new PDFSomePagesFailedError(
+        `${failedPagesMap.size} out of ${totalPages} pages failed to process in file ${fileName}`,
+        { fileName, failedPages: failedPagesMap }
+      );
+    }
+
+    return results;
   }
 
   /**
@@ -1717,105 +2018,81 @@ function createTimeoutPromise(
       ) {
         safeReject(
           new Error(
-            `Processing timeout for file "${fileName}" (${(
-              fileSize /
-              (1024 * 1024)
-            ).toFixed(1)}MB) - no activity for ${Math.round(
-              inactiveTime / 1000
-            )}s`
+            `Processing timeout for file "${fileName}" (${formatFileSize(
+              fileSize
+            )}) - no activity for ${Math.round(inactiveTime / 1000)}s`
           ),
-          "Inactivity timeout exceeded"
+          "Processing timeout"
         );
       }
     }, HEARTBEAT_INTERVAL);
 
-    // Set absolute maximum timeout
+    // Create the max timeout to reject if processing takes too long
     resources.maxTimeoutId = setTimeout(() => {
       if (isPromiseSettled) return;
 
       safeReject(
         new Error(
-          `Maximum processing time (${
-            MAX_TIMEOUT / 1000
-          }s) exceeded for file "${fileName}"`
+          `Processing timeout for file "${fileName}" (${formatFileSize(
+            fileSize
+          )}) - processing took too long`
         ),
-        "Maximum processing time exceeded"
+        "Processing timeout"
       );
     }, MAX_TIMEOUT);
 
-    // Set up activity tracking event listener
-    if (global.EventTarget && isWindowDefined()) {
-      resources.activityListener = (e: Event) => {
-        const event = e as CustomEvent;
-        if (event.detail && event.detail.clientId === processorClientId) {
-          updateActivity();
-        }
-      };
+    // Create an activity listener to keep the process active
+    resources.activityListener = (e: Event) => {
+      if (isPromiseSettled) return;
+
+      const event = e as CustomEvent;
+      if (event.detail && event.detail.clientId === processorClientId) {
+        updateActivity();
+      }
+    };
+
+    // Create an abort handler to reject if processing is aborted
+    resources.abortHandler = () => {
+      if (isPromiseSettled) return;
+
+      safeReject(new AbortError("Processing aborted"), "Processing aborted");
+    };
+
+    // Create a cleanup listener to clean up resources on promise resolution
+    resources.cleanupListener = () => {
+      if (isPromiseSettled) return;
+
+      isPromiseSettled = true;
+      resources.cleanup();
+      resolvePromise();
+    };
+
+    // Set up all event listeners
+    if (isWindowDefined()) {
       document.addEventListener(
         ProcessorEventType.Activity,
         resources.activityListener
       );
-    }
-
-    // Set up abort signal handling
-    if (abortSignal) {
-      resources.abortHandler = () => {
-        if (isPromiseSettled) return;
-
-        safeReject(
-          new AbortError("Processing aborted"),
-          "Abort signal received"
-        );
-      };
-
-      if (abortSignal.aborted) {
-        resources.abortHandler();
-      } else {
-        abortSignal.addEventListener("abort", resources.abortHandler);
-      }
-    }
-
-    // Listen for cleanup events
-    if (isWindowDefined()) {
-      if (!resources.cleanupListener) return;
-      resources.cleanupListener = (e: Event) => {
-        const event = e as CustomEvent;
-        if (event.detail && event.detail.clientId === processorClientId) {
-          resources.cleanup();
-          logger.log(
-            `Received cleanup event for client ID ${event.detail.clientId}`
-          );
-          if (!isPromiseSettled) {
-            safeReject(
-              new Error(`Processing of "${fileName}" was manually cleaned up`),
-              "Manual cleanup requested"
-            );
-          }
-        }
-      };
       document.addEventListener(
         ProcessorEventType.Cleanup,
         resources.cleanupListener
       );
     }
 
-    updateActivity();
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", resources.abortHandler);
+    }
   });
-
-  const resolveTimeout = () => {
-    if (isPromiseSettled) return;
-
-    logger.log(
-      `Processing completed successfully for "${fileName}", resolving timeout`
-    );
-    isPromiseSettled = true;
-    resources.cleanup();
-    resolvePromise();
-  };
 
   return {
     timeoutPromise,
-    resolveTimeout,
+    resolveTimeout: () => {
+      if (isPromiseSettled) return;
+
+      isPromiseSettled = true;
+      resources.cleanup();
+      resolvePromise();
+    },
   };
 }
 

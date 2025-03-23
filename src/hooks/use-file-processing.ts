@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useRef } from "react";
 import {
   ProcessingStatus,
   useProcessedFilesStore,
@@ -13,9 +13,9 @@ import { useUserPreferencesStore } from "@/store/user-preferences";
 import { usePanelHelpers } from "./use-panel-helpers";
 import { useShallow } from "zustand/shallow";
 import { DisplayInfo } from "@/types/processor";
-import { resetPDFWorkerPoolInstance } from "@/utils/pdf-cleanup";
 import logger from "@/utils/logger";
 import { AbortError, isErrorType } from "@/utils/error";
+import { PDFError, BatchProcessingError } from "@/utils/pdf-errors";
 
 export type ProcessingInfo = {
   fileName: string;
@@ -37,10 +37,10 @@ export function useFileProcessing(
   const abortControllerRef = useRef<AbortController | null>(null);
   const processingInfoRef = useRef<ProcessingInfo | null>(null);
 
-  // Component-specific tracking for StrictMode detection
-  const isComponentMountedRef = useRef(false);
-  const isFirstCleanupRef = useRef(true);
-  const mountTimestampRef = useRef(0);
+  // // Component-specific tracking for StrictMode detection
+  // const isComponentMountedRef = useRef(false);
+  // const isFirstCleanupRef = useRef(true);
+  // const mountTimestampRef = useRef(0);
 
   // Get panel helpers
   const { openFileUploadOptionsPanel, closeFileUploadOptionsPanel } =
@@ -111,68 +111,9 @@ export function useFileProcessing(
       }, 500);
 
       try {
-        await batchProcessor.processBatch(
-          files,
-          {
-            onFileAdd: (fileName, totalPages, metadata) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_ADD,
-                fileName,
-                totalPages,
-                metadata
-              );
-
-              processingInfoRef.current = {
-                fileName,
-                totalFiles: files.length,
-                progress: processingInfoRef.current?.progress || 0,
-              };
-            },
-            onFileStatus: (fileName, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_STATUS,
-                fileName,
-                status
-              );
-
-              if (
-                status === ProcessingStatus.COMPLETED ||
-                status === ProcessingStatus.FAILED
-              ) {
-                if (processingInfoRef.current) {
-                  const newProgress = Math.min(
-                    100,
-                    (processingInfoRef.current.progress || 0) +
-                      100 / files.length
-                  );
-                  processingInfoRef.current = {
-                    ...processingInfoRef.current,
-                    fileName,
-                    progress: newProgress,
-                  };
-                }
-              }
-            },
-            onPageProcessed: (fileName, pageNumber, url, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-                fileName,
-                pageNumber,
-                url,
-                status
-              );
-            },
-            displayInfo: getDisplayInfo(),
-          },
-          abortSignal
-        );
+        await batchProcessor.processBatch(files, getDisplayInfo(), abortSignal);
       } catch (error) {
-        if (isErrorType(error, AbortError)) {
-          toast.dismiss("file-processing");
-          toast.error("Processing cancelled");
-        } else {
-          throw error;
-        }
+        throw error;
       }
     },
     [getDisplayInfo]
@@ -208,62 +149,7 @@ export function useFileProcessing(
       }, 350);
 
       try {
-        await batchProcessor.processBatch(
-          files,
-          {
-            onFileAdd: (fileName, totalPages, metadata) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_ADD,
-                fileName,
-                totalPages,
-                metadata
-              );
-
-              processingInfoRef.current = {
-                fileName,
-                totalFiles: files.length,
-                progress: processingInfoRef.current?.progress || 0,
-              };
-            },
-            onFileStatus: (fileName, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_STATUS,
-                fileName,
-                status
-              );
-
-              if (
-                status === ProcessingStatus.COMPLETED ||
-                status === ProcessingStatus.FAILED
-              ) {
-                if (processingInfoRef.current) {
-                  const newProgress = Math.min(
-                    100,
-                    (processingInfoRef.current.progress || 0) +
-                      100 / files.length
-                  );
-                  processingInfoRef.current = {
-                    ...processingInfoRef.current,
-                    fileName,
-                    progress: newProgress,
-                  };
-                }
-              }
-            },
-            onImageProcessed: (fileName, url, status) => {
-              if (status === ProcessingStatus.COMPLETED && url) {
-                fileProcessingEmitter.emit(
-                  FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-                  fileName,
-                  1, // Images always have 1 page
-                  url,
-                  status
-                );
-              }
-            },
-          },
-          abortSignal
-        );
+        await batchProcessor.processBatch(files, abortSignal);
       } catch (error) {
         throw error;
       }
@@ -345,28 +231,67 @@ export function useFileProcessing(
     const isImage = fileCategory === "image";
 
     // Event listeners
-    const onFileAdd = (
-      fileName: string,
-      totalPages: number,
-      { size, type }: { size: number; type: string }
-    ) => {
-      addFile(fileName, totalPages, { size, type });
-    };
-
-    const onPageProcessed = function (
-      fileName: string,
-      pageNumber: number,
-      url: string | null,
-      status: ProcessingStatus
-    ) {
-      if (status === ProcessingStatus.COMPLETED && url) {
-        addPageToFile(fileName, pageNumber, url);
+    const onFileAdd = (data: {
+      fileName: string;
+      totalPages: number;
+      metadata: { size: number; type: string };
+    }) => {
+      if (processingInfoRef.current) {
+        processingInfoRef.current = {
+          ...processingInfoRef.current,
+          fileName: data.fileName,
+        };
       }
-      setPageStatus(fileName, pageNumber, status);
+      addFile(data.fileName, data.totalPages, data.metadata);
     };
 
-    const onFileStatus = (fileName: string, status: ProcessingStatus) => {
-      setFileStatus(fileName, status);
+    const onPageProcessed = function (data: {
+      fileName: string;
+      pageNumber: number;
+      url: string | null;
+      status: ProcessingStatus;
+      errorReason?: string;
+    }) {
+      if (data.status === ProcessingStatus.COMPLETED && data.url) {
+        addPageToFile(
+          data.fileName,
+          data.pageNumber,
+          data.url,
+          data.status,
+          data.errorReason
+        );
+      } else {
+        setPageStatus(
+          data.fileName,
+          data.pageNumber,
+          data.status,
+          data.errorReason
+        );
+      }
+    };
+
+    const onFileStatus = (data: {
+      fileName: string;
+      status: ProcessingStatus;
+    }) => {
+      if (
+        processingInfoRef.current &&
+        (data.status === ProcessingStatus.COMPLETED ||
+          data.status === ProcessingStatus.FAILED)
+      ) {
+        const newProgress = Math.min(
+          100,
+          (processingInfoRef.current.progress || 0) +
+            100 / processingQueueRef.current.length
+        );
+
+        processingInfoRef.current = {
+          ...processingInfoRef.current,
+          fileName: data.fileName,
+          progress: newProgress,
+        };
+      }
+      setFileStatus(data.fileName, data.status);
     };
 
     fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
@@ -387,16 +312,18 @@ export function useFileProcessing(
         }
         resolve();
       } catch (error) {
-        if (isErrorType(error, AbortError)) {
-          toast.dismiss("file-processing");
-          toast.error("Processing cancelled");
-        } else {
-          reject(error);
-        }
+        reject(error);
       } finally {
         processingRef.current = false;
         processingInfoRef.current = null;
         closeFileUploadOptionsPanel();
+
+        // Clean up event listeners
+        fileProcessingEmitter.off(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
+        fileProcessingEmitter.off(
+          FILE_PROCESSING_EVENTS.FILE_STATUS,
+          onFileStatus
+        );
         fileProcessingEmitter.off(
           FILE_PROCESSING_EVENTS.FILE_STATUS,
           onFileStatus
@@ -421,8 +348,19 @@ export function useFileProcessing(
       loading: "Initializing processor...",
       success: () => "All files processed successfully! 🎉",
       error: (error) => {
-        console.error("Processing error:", error);
-        return error instanceof Error
+        if (isErrorType(error, AbortError)) {
+          return "Processing cancelled";
+        }
+
+        if (isErrorType(error, PDFError)) {
+          return error.message;
+        }
+
+        if (isErrorType(error, BatchProcessingError)) {
+          return error.message;
+        }
+
+        return isErrorType(error, Error)
           ? `Processing failed: ${error.message}`
           : "Failed to process files. Please try again.";
       },

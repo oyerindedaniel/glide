@@ -12,20 +12,8 @@ import {
 import { DEFAULT_MAX_CONCURRENT_FILES } from "@/config/app";
 import logger from "@/utils/logger";
 import { AbortError } from "@/utils/error";
-
-export interface ImageProcessingCallbacks {
-  onFileAdd: (
-    fileName: string,
-    totalPages: number,
-    metadata: { size: number; type: string }
-  ) => void;
-  onFileStatus: (fileName: string, status: ProcessingStatus) => void;
-  onImageProcessed: (
-    fileName: string,
-    url: string | null,
-    status: ProcessingStatus
-  ) => void;
-}
+import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
+import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
 
 export interface FileValidationResult {
   isValid: boolean;
@@ -95,11 +83,7 @@ export class ImageBatchProcessor {
   /**
    * Process a batch of images
    */
-  public async processBatch(
-    files: File[],
-    callbacks: ImageProcessingCallbacks,
-    abortSignal: AbortSignal
-  ) {
+  public async processBatch(files: File[], abortSignal: AbortSignal) {
     const state = { totalPages: 0, processedPages: 0 };
     state.totalPages = files.length;
 
@@ -115,7 +99,7 @@ export class ImageBatchProcessor {
 
       const results = await Promise.all(
         files.map((file) =>
-          limit(() => this.processImage(file, callbacks, abortSignal, state))
+          limit(() => this.processImage(file, abortSignal, state))
         )
       );
 
@@ -133,7 +117,6 @@ export class ImageBatchProcessor {
    */
   private async processImage(
     file: File,
-    callbacks: ImageProcessingCallbacks,
     abortSignal: AbortSignal,
     state: { totalPages: number; processedPages: number }
   ): Promise<boolean> {
@@ -143,10 +126,18 @@ export class ImageBatchProcessor {
 
     try {
       batchedUpdates(() => {
-        callbacks.onFileStatus(file.name, ProcessingStatus.PROCESSING);
-        callbacks.onFileAdd(file.name, 1, {
-          size: file.size,
-          type: file.type,
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+          fileName: file.name,
+          status: ProcessingStatus.PROCESSING,
+        });
+
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_ADD, {
+          fileName: file.name,
+          totalPages: 1,
+          metadata: {
+            size: file.size,
+            type: file.type,
+          },
         });
       });
 
@@ -158,15 +149,27 @@ export class ImageBatchProcessor {
       }
 
       batchedUpdates(() => {
-        callbacks.onImageProcessed(file.name, url, ProcessingStatus.COMPLETED);
-        callbacks.onFileStatus(file.name, ProcessingStatus.COMPLETED);
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.PAGE_PROCESSED, {
+          fileName: file.name,
+          pageNumber: 1, // Images always have 1 page
+          url,
+          status: ProcessingStatus.COMPLETED,
+        });
+
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+          fileName: file.name,
+          status: ProcessingStatus.COMPLETED,
+        });
       });
 
       state.processedPages++;
       this.updateProgress(state.processedPages, state.totalPages);
       return true;
     } catch (error) {
-      callbacks.onFileStatus(file.name, ProcessingStatus.FAILED);
+      fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+        fileName: file.name,
+        status: ProcessingStatus.FAILED,
+      });
       return false;
     }
   }
