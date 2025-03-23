@@ -1303,6 +1303,10 @@ export class PDFBatchProcessor {
     const processFile = async (file: File) => {
       if (localAbortSignal.aborted) {
         logger.log(`Skipping processing of ${file.name} due to abort`);
+        fileProcessingEmitter.emit(FILE_PROCESSING_EVENTS.FILE_STATUS, {
+          fileName: file.name,
+          status: ProcessingStatus.ABORTED,
+        });
         throw new AbortError("Processing aborted");
       }
 
