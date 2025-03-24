@@ -7,14 +7,19 @@ import { PDFBatchProcessor } from "@/classes/pdf-processor";
 import { ImageBatchProcessor } from "@/classes/image-processor";
 import { validateFileBatchWithContent } from "@/utils/file-validation";
 import { toast } from "sonner";
-import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
+import {
+  FileAddPayload,
+  fileProcessingEmitter,
+  FileStatusPayload,
+  PageProcessedPayload,
+} from "@/classes/file-processing-emitter";
 import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
 import { useUserPreferencesStore } from "@/store/user-preferences";
 import { usePanelHelpers } from "./use-panel-helpers";
 import { useShallow } from "zustand/shallow";
 import { DisplayInfo } from "@/types/processor";
 import logger from "@/utils/logger";
-import { AbortError, isErrorType } from "@/utils/error";
+import { AbortError, isErrorType, normalizeError } from "@/utils/error";
 import { PDFError, BatchProcessingError } from "@/utils/pdf-errors";
 
 export type ProcessingInfo = {
@@ -231,11 +236,7 @@ export function useFileProcessing(
     const isImage = fileCategory === "image";
 
     // Event listeners
-    const onFileAdd = (data: {
-      fileName: string;
-      totalPages: number;
-      metadata: { size: number; type: string };
-    }) => {
+    const onFileAdd = (data: FileAddPayload) => {
       if (processingInfoRef.current) {
         processingInfoRef.current = {
           ...processingInfoRef.current,
@@ -245,13 +246,7 @@ export function useFileProcessing(
       addFile(data.fileName, data.totalPages, data.metadata);
     };
 
-    const onPageProcessed = function (data: {
-      fileName: string;
-      pageNumber: number;
-      url: string | null;
-      status: ProcessingStatus;
-      errorReason?: string;
-    }) {
+    const onPageProcessed = function (data: PageProcessedPayload) {
       if (data.status === ProcessingStatus.COMPLETED && data.url) {
         addPageToFile(
           data.fileName,
@@ -270,10 +265,7 @@ export function useFileProcessing(
       }
     };
 
-    const onFileStatus = (data: {
-      fileName: string;
-      status: ProcessingStatus;
-    }) => {
+    const onFileStatus = (data: FileStatusPayload) => {
       if (
         processingInfoRef.current &&
         (data.status === ProcessingStatus.COMPLETED ||
@@ -347,7 +339,7 @@ export function useFileProcessing(
         "border-border-success rounded-xl gap-2 text-base text-white font-semibold py-4 px-6",
       loading: "Initializing processor...",
       success: () => "All files processed successfully! 🎉",
-      error: (error) => {
+      error: (error: unknown) => {
         if (isErrorType(error, AbortError)) {
           return "Processing cancelled";
         }
@@ -361,7 +353,7 @@ export function useFileProcessing(
         }
 
         return isErrorType(error, Error)
-          ? `Processing failed: ${error.message}`
+          ? `Processing failed: ${normalizeError(error).message}`
           : "Failed to process files. Please try again.";
       },
       id: "file-processing",

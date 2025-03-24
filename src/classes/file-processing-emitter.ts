@@ -2,18 +2,18 @@ import mitt, { Emitter } from "mitt";
 import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
 import { ProcessingStatus } from "@/store/processed-files";
 
-type FileAddPayload = {
+export type FileAddPayload = {
   fileName: string;
   totalPages: number;
   metadata: { size: number; type: string };
 };
 
-type FileStatusPayload = {
+export type FileStatusPayload = {
   fileName: string;
   status: ProcessingStatus;
 };
 
-type PageProcessedPayload = {
+export type PageProcessedPayload = {
   fileName: string;
   pageNumber: number;
   url: string | null;
@@ -21,12 +21,12 @@ type PageProcessedPayload = {
   errorReason?: string;
 };
 
-type ProcessingProgressPayload = {
+export type ProcessingProgressPayload = {
   progress: number;
   total: number;
 };
 
-type ProcessingCompletePayload = {
+export type ProcessingCompletePayload = {
   success: boolean;
   error?: Error;
 };
