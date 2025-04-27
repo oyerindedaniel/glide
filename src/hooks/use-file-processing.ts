@@ -91,7 +91,7 @@ export function useFileProcessing(
       // The setTotalFiles function ADDS to the total, it doesn't replace
       // setTotalFiles(files.length);
     },
-    [addFile, setFileStatus]
+    [addFile]
   );
 
   /**
