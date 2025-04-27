@@ -204,7 +204,7 @@ type ResultError<E> = {
   code: ErrorCode;
 };
 
-type Result<T, E extends Error = Error> =
+export type Result<T, E extends Error = Error> =
   | { success: true; data: T; error?: undefined }
   | { success: false; error: ResultError<E>; data?: undefined };
 

@@ -367,7 +367,7 @@ const processMessage = async (
 
         // Create viewport with calculated scale
         const pageViewport = page.getViewport({
-          scale: scale,
+          scale,
           rotation: rotation,
         });
 

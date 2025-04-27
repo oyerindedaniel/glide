@@ -235,7 +235,6 @@ function createPDFErrorFromFailedPages(
   );
 }
 
-// Re-export the PDF error classes
 export {
   PDFError,
   PDFAllPagesFailedError,

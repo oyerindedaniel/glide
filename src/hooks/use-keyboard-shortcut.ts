@@ -184,30 +184,6 @@ export type StandardKey =
 // Base type - a key without modifiers
 export type BaseKey<K extends string> = Exclude<K, ModifierKey>;
 
-// Modifier combinations (pre-sorted for consistency)
-export type ModifierCombination =
-  | ModifierKey
-  | `alt+ctrl`
-  | `alt+meta`
-  | `alt+shift`
-  | `ctrl+meta`
-  | `ctrl+shift`
-  | `meta+shift`
-  | `alt+ctrl+meta`
-  | `alt+ctrl+shift`
-  | `alt+meta+shift`
-  | `ctrl+meta+shift`
-  | `alt+ctrl+meta+shift`;
-
-// The improved keyboard shortcut string type
-export type KeyboardShortcutString<K extends string = string> =
-  | BaseKey<K>
-  | `${ModifierCombination}+${BaseKey<K>}`;
-
-const test: KeyboardShortcutString<"ctrl+ctrl"> = "ctrl+ctrl";
-
-console.log(test);
-
 // Keyboard shortcut configuration
 export interface KeyboardShortcutConfig<T extends string = string> {
   /**
@@ -317,7 +293,7 @@ function mapModifierForPlatform(
 ): ModifierKey[] {
   if (platform === "mac") {
     // On Mac, Cmd is commonly used where Ctrl would be on Windows
-    if (modifier === "ctrl") return ["ctrl", "meta"]; // Allow both Ctrl and Cmd
+    if (modifier === "ctrl") return ["meta"]; // Allow Cmd
     if (modifier === "meta") return ["meta"]; // Keep meta as-is
   } else {
     // On Windows/Linux, Ctrl is used where Mac would use Cmd
@@ -383,7 +359,6 @@ function formatShortcut(
       [...sortedModifiers, config.key].join("+").toLowerCase()
     );
   });
-
   return allCombinations;
 }
 

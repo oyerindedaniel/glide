@@ -51,7 +51,6 @@ export function useFileProcessing(
   const { openFileUploadOptionsPanel, closeFileUploadOptionsPanel } =
     usePanelHelpers();
 
-  // Get store functions
   const {
     addFile,
     addPageToFile,
@@ -72,6 +71,49 @@ export function useFileProcessing(
 
   const { lastFileUploadAction, setLastFileUploadAction } =
     useUserPreferencesStore();
+
+  /**
+   * Register files in the store with NOT_STARTED status
+   * @param files Array of files to register
+   */
+  const registerFilesInStore = useCallback(
+    (files: File[]) => {
+      // Add files to the store with NOT_STARTED status
+      files.forEach((file) => {
+        // Add the file to the store with minimal information
+        // The actual page count will be updated during processing
+        addFile(file.name, 0, { size: file.size, type: file.type });
+        // Explicitly set the file status to NOT_STARTED
+        // setFileStatus(file.name, ProcessingStatus.NOT_STARTED);
+      });
+
+      // DO NOT update total files count here - it's handled by addFile
+      // The setTotalFiles function ADDS to the total, it doesn't replace
+      // setTotalFiles(files.length);
+    },
+    [addFile, setFileStatus]
+  );
+
+  /**
+   * Add files to the processing queue and register them in the store
+   * @param files Files to add to the queue
+   * @param clearExisting Whether to clear the existing queue
+   * @returns Number of files added
+   */
+  const addFilesToQueue = useCallback(
+    (files: File[], clearExisting = false) => {
+      if (clearExisting) {
+        processingQueueRef.current = [...files];
+      } else {
+        processingQueueRef.current = [...processingQueueRef.current, ...files];
+      }
+
+      // registerFilesInStore(files);
+
+      return files.length;
+    },
+    []
+  );
 
   /**
    * Get display info for the viewport
@@ -387,7 +429,10 @@ export function useFileProcessing(
     if (pendingFilesRef.current) {
       const newFiles = Array.from(pendingFilesRef.current);
       pendingFilesRef.current = null;
-      processingQueueRef.current = newFiles;
+
+      // Add files to queue
+      addFilesToQueue(newFiles, true);
+
       // Start processing immediately
       processFilesInQueue();
     }
@@ -395,6 +440,7 @@ export function useFileProcessing(
     // Save preference
     setLastFileUploadAction("override");
   }, [
+    addFilesToQueue,
     closeFileUploadOptionsPanel,
     processFilesInQueue,
     reset,
@@ -410,9 +456,11 @@ export function useFileProcessing(
     if (pendingFilesRef.current) {
       const newFiles = Array.from(pendingFilesRef.current);
       pendingFilesRef.current = null;
-      processingQueueRef.current = [...processingQueueRef.current, ...newFiles];
 
-      toast.success(`Added ${newFiles.length} files to processing queue`);
+      // Add files to queue
+      const filesAdded = addFilesToQueue(newFiles);
+
+      toast.success(`Added ${filesAdded} files to processing queue`);
 
       // If not currently processing, start processing the queue
       if (!processingRef.current) {
@@ -423,6 +471,7 @@ export function useFileProcessing(
     // Save preference
     setLastFileUploadAction("add-to-queue");
   }, [
+    addFilesToQueue,
     closeFileUploadOptionsPanel,
     processFilesInQueue,
     setLastFileUploadAction,
@@ -437,6 +486,8 @@ export function useFileProcessing(
       // Decision criteria:
       // 1. If already processing: check preferences, otherwise ask user
       // 2. If not processing: start processing immediately
+
+      const uploadedFiles = Array.from(files);
 
       if (processingRef.current) {
         pendingFilesRef.current = files;
@@ -454,15 +505,12 @@ export function useFileProcessing(
         }
       } else {
         // Not currently processing, add to queue and start processing
-        const uploadedFiles = Array.from(files);
-        processingQueueRef.current = [
-          ...processingQueueRef.current,
-          ...uploadedFiles,
-        ];
+        addFilesToQueue(uploadedFiles);
         processFilesInQueue();
       }
     },
     [
+      addFilesToQueue,
       handleAbortAndProcess,
       handleAddToQueue,
       lastFileUploadAction,

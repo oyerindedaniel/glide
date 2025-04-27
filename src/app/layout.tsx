@@ -4,6 +4,7 @@ import manrope from "@/assets/fonts";
 import { cn } from "@/lib/utils";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { ToastProvider as Toaster } from "@/components/ui/toast";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata: Metadata = {
   title: "Glide",
@@ -26,7 +27,7 @@ export default function RootLayout({
           manrope.variable
         )}
       >
-        {children}
+        <TooltipProvider delayDuration={0}>{children}</TooltipProvider>
         <Toaster />
         <SonnerToaster
           toastOptions={{

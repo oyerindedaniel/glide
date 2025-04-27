@@ -20,6 +20,7 @@ import { useDropAnimationStore } from "@/store/drop-animation-store";
 import FileDropZone from "@/components/file-dropzone";
 import SearchInput from "@/components/search-input";
 import { ModeHandler } from "@/components/mode-handler";
+import { useProcessedFilesStore } from "@/store/processed-files";
 
 export default function HomePage() {
   const router = useRouter();
@@ -29,6 +30,9 @@ export default function HomePage() {
   const searchInputRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const [switchButtonTop, setSwitchButtonTop] = useState<number>(0);
+  const { processedFiles } = useProcessedFilesStore();
+
+  console.log(processedFiles);
 
   const { cleanup } = useDropAnimationStore();
 

@@ -43,6 +43,7 @@ import {
   WorkerCommunicationError,
   WorkerPoolError,
   tryCatch,
+  normalizeError,
 } from "@/utils/error";
 
 // Reference to the shared PDF.js library worker
@@ -195,20 +196,27 @@ export class PDFWorkerPool {
   private async initialize(): Promise<void> {
     if (this.isInitialized || !isBrowserWithWorker()) return;
 
-    const { error: initializeError } = await tryCatch(
-      this.initializeCoordinators()
-    );
+    const { error: initializeError } = await tryCatch<
+      void,
+      WorkerInitializationError
+    >(this.initializeCoordinators());
 
     if (initializeError) {
       throw initializeError.raw;
     }
   }
 
-  private async initializeCoordinators() {
+  private async initializeCoordinators(): Promise<void> {
     if (!sharedLibraryWorker || !isBrowserWithWorker() || this.isInitialized) {
       if (!sharedLibraryWorker) {
         throw new WorkerInitializationError(
           "Failed to initialize shared library worker"
+        );
+      }
+
+      if (!isBrowserWithWorker()) {
+        throw new WorkerInitializationError(
+          "Workers are only available in browser environments"
         );
       }
 
@@ -262,9 +270,14 @@ export class PDFWorkerPool {
 
         logger.log(`Initialized coordinator worker ${i}`);
       } catch (error) {
-        logger.error(`Error initializing coordinator worker ${i}:`, error);
+        logger.error(
+          `Error initializing coordinator worker ${i}:`,
+          normalizeError(error)
+        );
         throw new WorkerInitializationError(
-          `Failed to initialize coordinator worker ${i}: ${error}`
+          `Failed to initialize coordinator worker ${i}: ${normalizeError(
+            error
+          )}`
         );
       }
     }
@@ -884,7 +897,9 @@ export class PDFWorkerPool {
    */
   public static getSharedLibraryWorker(): Worker {
     if (!isBrowserWithWorker()) {
-      throw new Error("Workers are only available in browser environments");
+      throw new WorkerInitializationError(
+        "Workers are only available in browser environments"
+      );
     }
 
     if (!sharedLibraryWorker) {

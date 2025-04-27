@@ -23,12 +23,7 @@ import { useImagePreviewStore } from "@/store/image-preview";
 import { useProcessedFilesStore } from "@/store/processed-files";
 import { useShallow } from "zustand/shallow";
 import { Button } from "./button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "./tooltip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
 import { FILE_INPUT_TYPES } from "@/constants/processing";
 
 const ZOOM_LEVELS = [1, 1.5, 2, 3];
@@ -99,7 +94,6 @@ export function ImagePreview() {
     setZoomLevel(0);
   };
 
-  // Navigation handlers
   const handlePrevious = useCallback(() => {
     if (hasPrevious && previousPage) {
       const isPdf = previousPage.fileType === FILE_INPUT_TYPES.PDF;
@@ -124,7 +118,6 @@ export function ImagePreview() {
     }
   }, [hasNext, nextPage, openImagePreview]);
 
-  // Reset zoom when image changes or panel opens
   React.useEffect(() => {
     setZoomLevel(0);
   }, [previewImage?.src, isOpen]);
@@ -151,57 +144,55 @@ export function ImagePreview() {
             <PanelTitle>{previewImage.fileName}</PanelTitle>
           </div>
           <div className="flex items-center space-x-2 mr-9">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    onClick={handleZoomOut}
-                    size="icon"
-                    variant="subtle"
-                    disabled={zoomLevel === 0}
-                  >
-                    <ZoomOut aria-hidden="true" className="h-4 w-4" />
-                    <span className="sr-only">Zoom Out</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Zoom Out</p>
-                </TooltipContent>
-              </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={handleZoomOut}
+                  size="icon"
+                  variant="subtle"
+                  disabled={zoomLevel === 0}
+                >
+                  <ZoomOut aria-hidden="true" className="h-4 w-4" />
+                  <span className="sr-only">Zoom Out</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Zoom Out</p>
+              </TooltipContent>
+            </Tooltip>
 
-              <div className="px-2 min-w-12 text-center">
-                {Math.round(currentZoom * 100)}%
-              </div>
+            <div className="px-2 min-w-12 text-center">
+              {Math.round(currentZoom * 100)}%
+            </div>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    onClick={handleZoomIn}
-                    size="icon"
-                    variant="subtle"
-                    disabled={zoomLevel === ZOOM_LEVELS.length - 1}
-                  >
-                    <ZoomIn aria-hidden="true" className="h-4 w-4" />
-                    <span className="sr-only">Zoom In</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Zoom In</p>
-                </TooltipContent>
-              </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={handleZoomIn}
+                  size="icon"
+                  variant="subtle"
+                  disabled={zoomLevel === ZOOM_LEVELS.length - 1}
+                >
+                  <ZoomIn aria-hidden="true" className="h-4 w-4" />
+                  <span className="sr-only">Zoom In</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Zoom In</p>
+              </TooltipContent>
+            </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button onClick={handleReset} variant="subtle" size="icon">
-                    <Move aria-hidden="true" className="h-4 w-4" />
-                    <span className="sr-only">Reset Zoom</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  <p>Reset Zoom</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={handleReset} variant="subtle" size="icon">
+                  <Move aria-hidden="true" className="h-4 w-4" />
+                  <span className="sr-only">Reset Zoom</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                <p>Reset Zoom</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </PanelHeader>
         <PanelBody>
@@ -209,42 +200,38 @@ export function ImagePreview() {
             {/* Left Navigation Button */}
             {hasPrevious && (
               <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        onClick={handlePrevious}
-                        size="icon"
-                        variant="subtle"
-                      >
-                        <ChevronLeft aria-hidden="true" className="h-4 w-4" />
-                        <span className="sr-only">Previous Image</span>
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      <p>Previous Image</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handlePrevious}
+                      size="icon"
+                      variant="subtle"
+                    >
+                      <ChevronLeft aria-hidden="true" className="h-4 w-4" />
+                      <span className="sr-only">Previous Image</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>Previous Image</p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             )}
 
             {/* Right Navigation Button */}
             {hasNext && (
               <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button onClick={handleNext} size="icon" variant="subtle">
-                        <ChevronRight aria-hidden="true" className="h-4 w-4" />
-                        <span className="sr-only">Next Image</span>
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="left">
-                      <p>Next Image</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button onClick={handleNext} size="icon" variant="subtle">
+                      <ChevronRight aria-hidden="true" className="h-4 w-4" />
+                      <span className="sr-only">Next Image</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    <p>Next Image</p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             )}
 
