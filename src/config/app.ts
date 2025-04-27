@@ -117,7 +117,7 @@ const BASE_DELAY_MS = process.env.NEXT_PUBLIC_BASE_DELAY_MS
 // PDF Timeout and Heartbeat Configuration
 const PDF_MAX_TIMEOUT = process.env.NEXT_PUBLIC_PDF_MAX_TIMEOUT
   ? parseInt(process.env.NEXT_PUBLIC_PDF_MAX_TIMEOUT)
-  : 300000; // 5 minutes absolute maximum
+  : 600000; // 10 minutes absolute maximum
 
 const PDF_HEARTBEAT_INTERVAL = process.env.NEXT_PUBLIC_PDF_HEARTBEAT_INTERVAL
   ? parseInt(process.env.NEXT_PUBLIC_PDF_HEARTBEAT_INTERVAL)

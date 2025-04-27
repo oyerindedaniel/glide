@@ -1,32 +1,59 @@
+import logger from "@/utils/logger";
+import { isProduction } from "@/config/app";
+import { isWindowDefined } from "./app";
+
 /**
  * Known error codes for better error classification.
  */
 export enum ErrorCode {
+  SYSTEM_ERROR = "SYSTEM_ERROR",
   NETWORK_ERROR = "NETWORK_ERROR",
   DATABASE_ERROR = "DATABASE_ERROR",
+  TIMEOUT_ERROR = "TIMEOUT_ERROR",
   FILE_NOT_FOUND = "FILE_NOT_FOUND",
   PERMISSION_DENIED = "PERMISSION_DENIED",
   INVALID_INPUT = "INVALID_INPUT",
   AUTH_FAILED = "AUTH_FAILED",
   TOKEN_EXPIRED = "TOKEN_EXPIRED",
+
   // Worker-specific error codes
+  WORKER_ERROR = "WORKER_ERROR",
   WORKER_INIT_ERROR = "WORKER_INIT_ERROR",
   WORKER_TIMEOUT = "WORKER_TIMEOUT",
   WORKER_CLEANUP_ERROR = "WORKER_CLEANUP_ERROR",
   WORKER_COMMUNICATION_ERROR = "WORKER_COMMUNICATION_ERROR",
   WORKER_POOL_ERROR = "WORKER_POOL_ERROR",
   ABORT_ERROR = "ABORT_ERROR",
+  // PDF-specific error codes
+  PDF_CORRUPTED = "PDF_CORRUPTED",
+  PDF_PASSWORD_PROTECTED = "PDF_PASSWORD_PROTECTED",
+  PDF_PROCESSING_FAILED = "PDF_PROCESSING_FAILED",
+  PDF_BATCH_FAILURE = "PDF_BATCH_FAILURE",
+  PDF_FORMAT_ERROR = "PDF_FORMAT_ERROR",
+  PDF_MEMORY_ERROR = "PDF_MEMORY_ERROR",
+  PDF_ALL_PAGES_FAILED = "PDF_ALL_PAGES_FAILED",
+  PDF_SOME_PAGES_FAILED = "PDF_SOME_PAGES_FAILED",
+  PDF_PAGE_CORRUPT = "PDF_PAGE_CORRUPT",
+  PDF_PAGE_RENDER_ERROR = "PDF_PAGE_RENDER_ERROR",
+  PDF_PAGE_MEMORY_ERROR = "PDF_PAGE_MEMORY_ERROR",
+
+  /**
+   * An unknown error occurred.
+   */
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
 }
 
 /**
  * A mapping of error codes to user-friendly descriptions.
  */
-const errorMessageMap: Record<ErrorCode, string> = {
+export const errorMessageMap: Record<ErrorCode, string> = {
+  [ErrorCode.SYSTEM_ERROR]:
+    "A system error occurred, please try again later. If this persists, please contact support.",
   [ErrorCode.NETWORK_ERROR]:
     "Unable to connect to the server. Please check your internet connection and try again.",
   [ErrorCode.DATABASE_ERROR]:
     "There was a problem accessing the database. Please try again later.",
+  [ErrorCode.TIMEOUT_ERROR]: "The operation timed out. Please try again.",
   [ErrorCode.FILE_NOT_FOUND]:
     "The requested file could not be found. Please check the file path and try again.",
   [ErrorCode.PERMISSION_DENIED]:
@@ -37,6 +64,8 @@ const errorMessageMap: Record<ErrorCode, string> = {
     "Authentication failed. Please check your credentials and try again.",
   [ErrorCode.TOKEN_EXPIRED]: "Your session has expired. Please log in again.",
   // Worker-specific error messages
+  [ErrorCode.WORKER_ERROR]:
+    "An error occurred while processing the file. Please try again.",
   [ErrorCode.WORKER_INIT_ERROR]:
     "Failed to initialize the worker. Please try refreshing the page.",
   [ErrorCode.WORKER_TIMEOUT]:
@@ -49,6 +78,29 @@ const errorMessageMap: Record<ErrorCode, string> = {
     "There was an error with the worker pool. Please try again.",
   [ErrorCode.ABORT_ERROR]:
     "The operation was aborted. This may have been requested by the user or due to system constraints.",
+  // PDF-specific error messages
+  [ErrorCode.PDF_CORRUPTED]:
+    "The PDF file appears to be corrupted or invalid. Please check the file and try again.",
+  [ErrorCode.PDF_PASSWORD_PROTECTED]:
+    "The PDF file is password protected. Please provide the password or use an unprotected file.",
+  [ErrorCode.PDF_PROCESSING_FAILED]:
+    "Failed to process the PDF file. The file may be corrupted or in an unsupported format.",
+  [ErrorCode.PDF_BATCH_FAILURE]:
+    "One or more PDF files could not be processed. Please check the files and try again.",
+  [ErrorCode.PDF_FORMAT_ERROR]:
+    "The file is not in a supported PDF format. Please check the file and try again.",
+  [ErrorCode.PDF_MEMORY_ERROR]:
+    "Not enough memory to process the PDF file. Try closing other applications or processing a smaller file.",
+  [ErrorCode.PDF_ALL_PAGES_FAILED]:
+    "All pages in the PDF file could not be processed. Please check the file and try again.",
+  [ErrorCode.PDF_SOME_PAGES_FAILED]:
+    "Some pages in the PDF file could not be processed. You can still view the successful pages.",
+  [ErrorCode.PDF_PAGE_CORRUPT]:
+    "One or more pages in the PDF file appear to be corrupted.",
+  [ErrorCode.PDF_PAGE_RENDER_ERROR]:
+    "Failed to render one or more pages from the PDF file.",
+  [ErrorCode.PDF_PAGE_MEMORY_ERROR]:
+    "Not enough memory to process one or more pages from the PDF file.",
   [ErrorCode.UNKNOWN_ERROR]:
     "An unexpected error occurred. Please try again later.",
 };
@@ -67,10 +119,20 @@ class AppError extends Error {
 }
 
 /**
+ * Base error class for system-specific errors
+ */
+class SystemError extends AppError {
+  constructor(message: string = errorMessageMap[ErrorCode.SYSTEM_ERROR]) {
+    super(message, ErrorCode.SYSTEM_ERROR);
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * Base error class for worker-specific errors
  */
 class WorkerError extends AppError {
-  constructor(message: string, code: ErrorCode = ErrorCode.WORKER_INIT_ERROR) {
+  constructor(message: string, code: ErrorCode = ErrorCode.WORKER_ERROR) {
     super(message, code);
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -136,7 +198,15 @@ class AbortError extends AppError {
   }
 }
 
-type Result<T> = { data?: T; error?: { message: string; raw: unknown } };
+type ResultError<E> = {
+  message: string;
+  raw: E;
+  code: ErrorCode;
+};
+
+export type Result<T, E extends Error = Error> =
+  | { success: true; data: T; error?: undefined }
+  | { success: false; error: ResultError<E>; data?: undefined };
 
 /**
  * Executes an asynchronous operation and returns a standardized result object.
@@ -145,26 +215,27 @@ type Result<T> = { data?: T; error?: { message: string; raw: unknown } };
  * @param {Promise<T>} operation - The asynchronous operation to execute.
  * @returns {Promise<Result<T>>} A promise resolving to a `Result` object containing either the data or an error.
  */
-export async function tryCatch<T>(operation: Promise<T>): Promise<Result<T>> {
+export async function tryCatch<T, E extends Error = Error>(
+  operation: Promise<T>
+): Promise<Result<T, E>> {
   try {
     const data = await operation;
-    return { data };
+    return { success: true, data };
   } catch (err) {
-    let errorMessage = "An unexpected error occurred.";
+    let errorMessage = errorMessageMap[ErrorCode.UNKNOWN_ERROR];
     let errorCode = ErrorCode.UNKNOWN_ERROR;
 
-    if (err instanceof AppError) {
-      errorMessage = errorMessageMap[err.code] || errorMessage;
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      errorCode = err.code;
-    } else if (err instanceof Error) {
-      errorMessage = err.message;
+    if (err) {
+      errorMessage = getErrorMessage(err);
+      errorCode = getErrorCode(err);
     }
 
     return {
+      success: false,
       error: {
         message: errorMessage,
-        raw: err,
+        code: errorCode,
+        raw: normalizeError(err) as E,
       },
     };
   }
@@ -181,6 +252,16 @@ export function normalizeError(error: unknown): Error {
     return error;
   }
 
+  // Check if the error is a ResultError object with a raw property that's an Error
+  if (
+    error &&
+    typeof error === "object" &&
+    "raw" in error &&
+    error.raw instanceof Error
+  ) {
+    return error.raw;
+  }
+
   return new Error(String(error));
 }
 
@@ -189,16 +270,31 @@ export function normalizeError(error: unknown): Error {
  * Uses the error code message map for AppErrors, or the error message otherwise.
  *
  * @param error - Any error value
+ * @param fallback - A fallback function to return an error message if the error is not an AppError
  * @returns A user-friendly error message
  */
-export function getErrorMessage(error: unknown): string {
+export function getErrorMessage(
+  error: unknown,
+  fallback?: () => string
+): string {
   const normalizedError = normalizeError(error);
+  const isInProduction = isWindowDefined() && isProduction;
 
-  if (normalizedError instanceof AppError) {
-    return errorMessageMap[normalizedError.code] || normalizedError.message;
+  try {
+    logger.error("[ErrorHandler] error:", normalizedError);
+
+    if (isInProduction && isWorkerErrorType(normalizedError)) {
+      return errorMessageMap[ErrorCode.SYSTEM_ERROR];
+    }
+
+    if (normalizedError instanceof AppError) {
+      return normalizedError.message || errorMessageMap[normalizedError.code];
+    }
+
+    return fallback ? fallback() : normalizedError.message;
+  } catch {
+    return errorMessageMap[ErrorCode.SYSTEM_ERROR];
   }
-
-  return normalizedError.message;
 }
 
 /**
@@ -206,16 +302,29 @@ export function getErrorMessage(error: unknown): string {
  * Returns UNKNOWN_ERROR for non-AppError instances.
  *
  * @param error - Any error value
+ * @param fallback - A fallback function to return an error code if the error is not an AppError
  * @returns The error code
  */
-export function getErrorCode(error: unknown): ErrorCode {
+export function getErrorCode(
+  error: unknown,
+  fallback?: () => ErrorCode
+): ErrorCode {
   const normalizedError = normalizeError(error);
+  const isInProduction = isWindowDefined() && isProduction;
 
-  if (normalizedError instanceof AppError) {
-    return normalizedError.code;
+  try {
+    if (isInProduction && isWorkerErrorType(normalizedError)) {
+      return ErrorCode.SYSTEM_ERROR;
+    }
+
+    if (normalizedError instanceof AppError) {
+      return normalizedError.code;
+    }
+
+    return fallback ? fallback() : ErrorCode.UNKNOWN_ERROR;
+  } catch {
+    return ErrorCode.SYSTEM_ERROR;
   }
-
-  return ErrorCode.UNKNOWN_ERROR;
 }
 
 /**
@@ -226,7 +335,26 @@ export function isErrorType<T extends Error>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ErrorType: new (...args: any[]) => T
 ): error is T {
-  return error instanceof ErrorType;
+  const normalizedError = normalizeError(error);
+  return normalizedError instanceof ErrorType;
+}
+
+/**
+ * Checks if an error is a worker-related error (any subclass of WorkerError)
+ *
+ * @param error - Any error value to check
+ * @returns Boolean indicating whether the error is a worker error
+ */
+export function isWorkerErrorType(error: unknown): error is WorkerError {
+  const normalizedError = normalizeError(error);
+  return (
+    normalizedError instanceof WorkerError ||
+    normalizedError instanceof WorkerInitializationError ||
+    normalizedError instanceof WorkerTimeoutError ||
+    normalizedError instanceof WorkerCleanupError ||
+    normalizedError instanceof WorkerCommunicationError ||
+    normalizedError instanceof WorkerPoolError
+  );
 }
 
 /**
@@ -295,6 +423,7 @@ export function shouldRetry(error: unknown): boolean {
 
 export {
   AppError,
+  SystemError,
   WorkerError,
   WorkerInitializationError,
   WorkerTimeoutError,

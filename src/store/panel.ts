@@ -24,7 +24,6 @@ export const usePanelStore = create<PanelState>((set) => ({
       if (type === PanelType.CENTER) {
         let newStack = [...state.centerStack];
 
-        // Remove if it already exists (to avoid duplicates)
         newStack = newStack.filter((panel) => panel !== id);
 
         newStack.push(id);

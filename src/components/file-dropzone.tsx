@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
 "use client";
 
 import * as React from "react";
@@ -11,16 +10,19 @@ import { ANIMATION_DURATION } from "@/constants/drop-animation";
 import { cn } from "@/lib/utils";
 import { mergeRefs } from "@/utils/react";
 import { FileUploadOptionsPanel } from "./panels/file-upload-options";
-import { FILE_INPUT_TYPES } from "@/constants/processing";
+import {
+  FILE_INPUT_TYPES,
+  FILE_INPUT_TYPES_FULL,
+} from "@/constants/processing";
 import { useShallow } from "zustand/shallow";
 import { useFileProcessing } from "@/hooks/use-file-processing";
 import { unstable_batchedUpdates as batchedUpdates } from "react-dom";
 import FileInfoCard from "./file-info-card";
 
 const ALLOWED_IMAGE_TYPES = [
-  FILE_INPUT_TYPES.PNG,
-  FILE_INPUT_TYPES.JPEG,
-  FILE_INPUT_TYPES.WEBP,
+  FILE_INPUT_TYPES_FULL.PNG,
+  FILE_INPUT_TYPES_FULL.JPEG,
+  FILE_INPUT_TYPES_FULL.WEBP,
 ];
 const ALLOWED_FILE_TYPES = [...ALLOWED_IMAGE_TYPES, FILE_INPUT_TYPES.PDF];
 

@@ -37,13 +37,13 @@ import {
   calculateOptimalCoordinatorCount,
 } from "@/utils/concurrency";
 import {
-  WorkerError,
   WorkerInitializationError,
   WorkerTimeoutError,
   WorkerCleanupError,
   WorkerCommunicationError,
   WorkerPoolError,
-  ErrorCode,
+  tryCatch,
+  normalizeError,
 } from "@/utils/error";
 
 // Reference to the shared PDF.js library worker
@@ -196,12 +196,36 @@ export class PDFWorkerPool {
   private async initialize(): Promise<void> {
     if (this.isInitialized || !isBrowserWithWorker()) return;
 
-    await this.initializeCoordinators();
+    const { error: initializeError } = await tryCatch<
+      void,
+      WorkerInitializationError
+    >(this.initializeCoordinators());
+
+    if (initializeError) {
+      throw initializeError.raw;
+    }
   }
 
-  private async initializeCoordinators() {
-    if (!sharedLibraryWorker || !isBrowserWithWorker() || this.isInitialized)
+  private async initializeCoordinators(): Promise<void> {
+    if (!sharedLibraryWorker || !isBrowserWithWorker() || this.isInitialized) {
+      if (!sharedLibraryWorker) {
+        throw new WorkerInitializationError(
+          "Failed to initialize shared library worker"
+        );
+      }
+
+      if (!isBrowserWithWorker()) {
+        throw new WorkerInitializationError(
+          "Workers are only available in browser environments"
+        );
+      }
+
+      if (this.isInitialized) {
+        logger.log("Worker pool already initialized");
+      }
+
       return;
+    }
 
     logger.log(`Initializing ${this.coordinatorCount} coordinator workers...`);
 
@@ -246,8 +270,15 @@ export class PDFWorkerPool {
 
         logger.log(`Initialized coordinator worker ${i}`);
       } catch (error) {
-        logger.error(`Error initializing coordinator worker ${i}:`, error);
-        throw error;
+        logger.error(
+          `Error initializing coordinator worker ${i}:`,
+          normalizeError(error)
+        );
+        throw new WorkerInitializationError(
+          `Failed to initialize coordinator worker ${i}: ${normalizeError(
+            error
+          )}`
+        );
       }
     }
 
@@ -647,14 +678,25 @@ export class PDFWorkerPool {
   ): Promise<PDFWorkerPool> {
     if (PDFWorkerPool.instance) {
       if (!PDFWorkerPool.instance.isInitialized) {
-        await PDFWorkerPool.instance.initialize();
+        const { error: initializeError } = await tryCatch(
+          PDFWorkerPool.instance.initialize()
+        );
+
+        if (initializeError) {
+          throw initializeError.raw;
+        }
       }
       return PDFWorkerPool.instance;
     }
 
     const instance = new PDFWorkerPool(options);
     PDFWorkerPool.instance = instance;
-    await instance.initialize();
+    const { error: initializeError } = await tryCatch(instance.initialize());
+
+    if (initializeError) {
+      throw initializeError.raw;
+    }
+
     return instance;
   }
 
@@ -679,9 +721,8 @@ export class PDFWorkerPool {
 
   public async getWorker(): Promise<Worker> {
     if (!isBrowserWithWorker()) {
-      throw new WorkerError(
-        "Workers are only available in browser environments",
-        ErrorCode.WORKER_INIT_ERROR
+      throw new WorkerInitializationError(
+        "Workers are only available in browser environments"
       );
     }
 
@@ -856,7 +897,9 @@ export class PDFWorkerPool {
    */
   public static getSharedLibraryWorker(): Worker {
     if (!isBrowserWithWorker()) {
-      throw new Error("Workers are only available in browser environments");
+      throw new WorkerInitializationError(
+        "Workers are only available in browser environments"
+      );
     }
 
     if (!sharedLibraryWorker) {
@@ -876,15 +919,20 @@ export class PDFWorkerPool {
     coordinatorIndex?: number
   ): Promise<CoordinatorStatusMessage | null> {
     if (!isBrowserWithWorker()) {
-      throw new WorkerError(
-        "Workers are only available in browser environments",
-        ErrorCode.WORKER_INIT_ERROR
+      throw new WorkerInitializationError(
+        "Workers are only available in browser environments"
       );
     }
 
     // Wait for coordinators to initialize if they haven't
     if (!this.isInitialized) {
-      await this.initializeCoordinators();
+      const { error: initializeError } = await tryCatch(
+        this.initializeCoordinators()
+      );
+
+      if (initializeError) {
+        throw initializeError.raw;
+      }
     }
 
     // If no specific coordinator is requested, use the next coordinator in round-robin

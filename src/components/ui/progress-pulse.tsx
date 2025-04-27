@@ -104,7 +104,8 @@ const ProgressPulseContent = React.memo<ProgressPulseContentProps>(
       prevStatusRef.current = status;
     }, [status]);
 
-    const { text, bgColor, textColor, animatePulse } = statusConfig[status];
+    const { text, bgColor, textColor, animatePulse } =
+      statusConfig[status as keyof typeof statusConfig];
 
     return (
       <div

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useRef } from "react";
 import {
   ProcessingStatus,
   useProcessedFilesStore,
@@ -7,15 +7,20 @@ import { PDFBatchProcessor } from "@/classes/pdf-processor";
 import { ImageBatchProcessor } from "@/classes/image-processor";
 import { validateFileBatchWithContent } from "@/utils/file-validation";
 import { toast } from "sonner";
-import { fileProcessingEmitter } from "@/classes/file-processing-emitter";
+import {
+  FileAddPayload,
+  fileProcessingEmitter,
+  FileStatusPayload,
+  PageProcessedPayload,
+} from "@/classes/file-processing-emitter";
 import { FILE_PROCESSING_EVENTS } from "@/constants/processing";
 import { useUserPreferencesStore } from "@/store/user-preferences";
 import { usePanelHelpers } from "./use-panel-helpers";
 import { useShallow } from "zustand/shallow";
 import { DisplayInfo } from "@/types/processor";
-import { resetPDFWorkerPoolInstance } from "@/utils/pdf-cleanup";
 import logger from "@/utils/logger";
-import { AbortError, isErrorType } from "@/utils/error";
+import { AbortError, isErrorType, normalizeError } from "@/utils/error";
+import { PDFError, BatchProcessingError } from "@/utils/pdf-errors";
 
 export type ProcessingInfo = {
   fileName: string;
@@ -37,16 +42,15 @@ export function useFileProcessing(
   const abortControllerRef = useRef<AbortController | null>(null);
   const processingInfoRef = useRef<ProcessingInfo | null>(null);
 
-  // Component-specific tracking for StrictMode detection
-  const isComponentMountedRef = useRef(false);
-  const isFirstCleanupRef = useRef(true);
-  const mountTimestampRef = useRef(0);
+  // // Component-specific tracking for StrictMode detection
+  // const isComponentMountedRef = useRef(false);
+  // const isFirstCleanupRef = useRef(true);
+  // const mountTimestampRef = useRef(0);
 
   // Get panel helpers
   const { openFileUploadOptionsPanel, closeFileUploadOptionsPanel } =
     usePanelHelpers();
 
-  // Get store functions
   const {
     addFile,
     addPageToFile,
@@ -67,6 +71,49 @@ export function useFileProcessing(
 
   const { lastFileUploadAction, setLastFileUploadAction } =
     useUserPreferencesStore();
+
+  /**
+   * Register files in the store with NOT_STARTED status
+   * @param files Array of files to register
+   */
+  const registerFilesInStore = useCallback(
+    (files: File[]) => {
+      // Add files to the store with NOT_STARTED status
+      files.forEach((file) => {
+        // Add the file to the store with minimal information
+        // The actual page count will be updated during processing
+        addFile(file.name, 0, { size: file.size, type: file.type });
+        // Explicitly set the file status to NOT_STARTED
+        // setFileStatus(file.name, ProcessingStatus.NOT_STARTED);
+      });
+
+      // DO NOT update total files count here - it's handled by addFile
+      // The setTotalFiles function ADDS to the total, it doesn't replace
+      // setTotalFiles(files.length);
+    },
+    [addFile, setFileStatus]
+  );
+
+  /**
+   * Add files to the processing queue and register them in the store
+   * @param files Files to add to the queue
+   * @param clearExisting Whether to clear the existing queue
+   * @returns Number of files added
+   */
+  const addFilesToQueue = useCallback(
+    (files: File[], clearExisting = false) => {
+      if (clearExisting) {
+        processingQueueRef.current = [...files];
+      } else {
+        processingQueueRef.current = [...processingQueueRef.current, ...files];
+      }
+
+      // registerFilesInStore(files);
+
+      return files.length;
+    },
+    []
+  );
 
   /**
    * Get display info for the viewport
@@ -111,68 +158,9 @@ export function useFileProcessing(
       }, 500);
 
       try {
-        await batchProcessor.processBatch(
-          files,
-          {
-            onFileAdd: (fileName, totalPages, metadata) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_ADD,
-                fileName,
-                totalPages,
-                metadata
-              );
-
-              processingInfoRef.current = {
-                fileName,
-                totalFiles: files.length,
-                progress: processingInfoRef.current?.progress || 0,
-              };
-            },
-            onFileStatus: (fileName, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_STATUS,
-                fileName,
-                status
-              );
-
-              if (
-                status === ProcessingStatus.COMPLETED ||
-                status === ProcessingStatus.FAILED
-              ) {
-                if (processingInfoRef.current) {
-                  const newProgress = Math.min(
-                    100,
-                    (processingInfoRef.current.progress || 0) +
-                      100 / files.length
-                  );
-                  processingInfoRef.current = {
-                    ...processingInfoRef.current,
-                    fileName,
-                    progress: newProgress,
-                  };
-                }
-              }
-            },
-            onPageProcessed: (fileName, pageNumber, url, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-                fileName,
-                pageNumber,
-                url,
-                status
-              );
-            },
-            displayInfo: getDisplayInfo(),
-          },
-          abortSignal
-        );
+        await batchProcessor.processBatch(files, getDisplayInfo(), abortSignal);
       } catch (error) {
-        if (isErrorType(error, AbortError)) {
-          toast.dismiss("file-processing");
-          toast.error("Processing cancelled");
-        } else {
-          throw error;
-        }
+        throw error;
       }
     },
     [getDisplayInfo]
@@ -208,62 +196,7 @@ export function useFileProcessing(
       }, 350);
 
       try {
-        await batchProcessor.processBatch(
-          files,
-          {
-            onFileAdd: (fileName, totalPages, metadata) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_ADD,
-                fileName,
-                totalPages,
-                metadata
-              );
-
-              processingInfoRef.current = {
-                fileName,
-                totalFiles: files.length,
-                progress: processingInfoRef.current?.progress || 0,
-              };
-            },
-            onFileStatus: (fileName, status) => {
-              fileProcessingEmitter.emit(
-                FILE_PROCESSING_EVENTS.FILE_STATUS,
-                fileName,
-                status
-              );
-
-              if (
-                status === ProcessingStatus.COMPLETED ||
-                status === ProcessingStatus.FAILED
-              ) {
-                if (processingInfoRef.current) {
-                  const newProgress = Math.min(
-                    100,
-                    (processingInfoRef.current.progress || 0) +
-                      100 / files.length
-                  );
-                  processingInfoRef.current = {
-                    ...processingInfoRef.current,
-                    fileName,
-                    progress: newProgress,
-                  };
-                }
-              }
-            },
-            onImageProcessed: (fileName, url, status) => {
-              if (status === ProcessingStatus.COMPLETED && url) {
-                fileProcessingEmitter.emit(
-                  FILE_PROCESSING_EVENTS.PAGE_PROCESSED,
-                  fileName,
-                  1, // Images always have 1 page
-                  url,
-                  status
-                );
-              }
-            },
-          },
-          abortSignal
-        );
+        await batchProcessor.processBatch(files, abortSignal);
       } catch (error) {
         throw error;
       }
@@ -345,28 +278,54 @@ export function useFileProcessing(
     const isImage = fileCategory === "image";
 
     // Event listeners
-    const onFileAdd = (
-      fileName: string,
-      totalPages: number,
-      { size, type }: { size: number; type: string }
-    ) => {
-      addFile(fileName, totalPages, { size, type });
-    };
-
-    const onPageProcessed = function (
-      fileName: string,
-      pageNumber: number,
-      url: string | null,
-      status: ProcessingStatus
-    ) {
-      if (status === ProcessingStatus.COMPLETED && url) {
-        addPageToFile(fileName, pageNumber, url);
+    const onFileAdd = (data: FileAddPayload) => {
+      if (processingInfoRef.current) {
+        processingInfoRef.current = {
+          ...processingInfoRef.current,
+          fileName: data.fileName,
+        };
       }
-      setPageStatus(fileName, pageNumber, status);
+      addFile(data.fileName, data.totalPages, data.metadata);
     };
 
-    const onFileStatus = (fileName: string, status: ProcessingStatus) => {
-      setFileStatus(fileName, status);
+    const onPageProcessed = function (data: PageProcessedPayload) {
+      if (data.status === ProcessingStatus.COMPLETED && data.url) {
+        addPageToFile(
+          data.fileName,
+          data.pageNumber,
+          data.url,
+          data.status,
+          data.errorReason
+        );
+      } else {
+        setPageStatus(
+          data.fileName,
+          data.pageNumber,
+          data.status,
+          data.errorReason
+        );
+      }
+    };
+
+    const onFileStatus = (data: FileStatusPayload) => {
+      if (
+        processingInfoRef.current &&
+        (data.status === ProcessingStatus.COMPLETED ||
+          data.status === ProcessingStatus.FAILED)
+      ) {
+        const newProgress = Math.min(
+          100,
+          (processingInfoRef.current.progress || 0) +
+            100 / processingQueueRef.current.length
+        );
+
+        processingInfoRef.current = {
+          ...processingInfoRef.current,
+          fileName: data.fileName,
+          progress: newProgress,
+        };
+      }
+      setFileStatus(data.fileName, data.status);
     };
 
     fileProcessingEmitter.on(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
@@ -387,16 +346,18 @@ export function useFileProcessing(
         }
         resolve();
       } catch (error) {
-        if (isErrorType(error, AbortError)) {
-          toast.dismiss("file-processing");
-          toast.error("Processing cancelled");
-        } else {
-          reject(error);
-        }
+        reject(error);
       } finally {
         processingRef.current = false;
         processingInfoRef.current = null;
         closeFileUploadOptionsPanel();
+
+        // Clean up event listeners
+        fileProcessingEmitter.off(FILE_PROCESSING_EVENTS.FILE_ADD, onFileAdd);
+        fileProcessingEmitter.off(
+          FILE_PROCESSING_EVENTS.FILE_STATUS,
+          onFileStatus
+        );
         fileProcessingEmitter.off(
           FILE_PROCESSING_EVENTS.FILE_STATUS,
           onFileStatus
@@ -420,10 +381,21 @@ export function useFileProcessing(
         "border-border-success rounded-xl gap-2 text-base text-white font-semibold py-4 px-6",
       loading: "Initializing processor...",
       success: () => "All files processed successfully! 🎉",
-      error: (error) => {
-        console.error("Processing error:", error);
-        return error instanceof Error
-          ? `Processing failed: ${error.message}`
+      error: (error: unknown) => {
+        if (isErrorType(error, AbortError)) {
+          return "Processing cancelled";
+        }
+
+        if (isErrorType(error, PDFError)) {
+          return error.message;
+        }
+
+        if (isErrorType(error, BatchProcessingError)) {
+          return error.message;
+        }
+
+        return isErrorType(error, Error)
+          ? `Processing failed: ${normalizeError(error).message}`
           : "Failed to process files. Please try again.";
       },
       id: "file-processing",
@@ -457,7 +429,10 @@ export function useFileProcessing(
     if (pendingFilesRef.current) {
       const newFiles = Array.from(pendingFilesRef.current);
       pendingFilesRef.current = null;
-      processingQueueRef.current = newFiles;
+
+      // Add files to queue
+      addFilesToQueue(newFiles, true);
+
       // Start processing immediately
       processFilesInQueue();
     }
@@ -465,6 +440,7 @@ export function useFileProcessing(
     // Save preference
     setLastFileUploadAction("override");
   }, [
+    addFilesToQueue,
     closeFileUploadOptionsPanel,
     processFilesInQueue,
     reset,
@@ -480,9 +456,11 @@ export function useFileProcessing(
     if (pendingFilesRef.current) {
       const newFiles = Array.from(pendingFilesRef.current);
       pendingFilesRef.current = null;
-      processingQueueRef.current = [...processingQueueRef.current, ...newFiles];
 
-      toast.success(`Added ${newFiles.length} files to processing queue`);
+      // Add files to queue
+      const filesAdded = addFilesToQueue(newFiles);
+
+      toast.success(`Added ${filesAdded} files to processing queue`);
 
       // If not currently processing, start processing the queue
       if (!processingRef.current) {
@@ -493,6 +471,7 @@ export function useFileProcessing(
     // Save preference
     setLastFileUploadAction("add-to-queue");
   }, [
+    addFilesToQueue,
     closeFileUploadOptionsPanel,
     processFilesInQueue,
     setLastFileUploadAction,
@@ -507,6 +486,8 @@ export function useFileProcessing(
       // Decision criteria:
       // 1. If already processing: check preferences, otherwise ask user
       // 2. If not processing: start processing immediately
+
+      const uploadedFiles = Array.from(files);
 
       if (processingRef.current) {
         pendingFilesRef.current = files;
@@ -524,15 +505,12 @@ export function useFileProcessing(
         }
       } else {
         // Not currently processing, add to queue and start processing
-        const uploadedFiles = Array.from(files);
-        processingQueueRef.current = [
-          ...processingQueueRef.current,
-          ...uploadedFiles,
-        ];
+        addFilesToQueue(uploadedFiles);
         processFilesInQueue();
       }
     },
     [
+      addFilesToQueue,
       handleAbortAndProcess,
       handleAddToQueue,
       lastFileUploadAction,

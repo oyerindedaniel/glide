@@ -181,11 +181,8 @@ export type StandardKey =
   | "="
   | " ";
 
-// Create a mapped type for keyboard shortcuts
-export type KeyboardShortcutString<
-  M extends ModifierKey,
-  K extends string = string
-> = `${M}+${Exclude<K, ModifierKey>}` | Exclude<K, ModifierKey>;
+// Base type - a key without modifiers
+export type BaseKey<K extends string> = Exclude<K, ModifierKey>;
 
 // Keyboard shortcut configuration
 export interface KeyboardShortcutConfig<T extends string = string> {
@@ -296,7 +293,7 @@ function mapModifierForPlatform(
 ): ModifierKey[] {
   if (platform === "mac") {
     // On Mac, Cmd is commonly used where Ctrl would be on Windows
-    if (modifier === "ctrl") return ["ctrl", "meta"]; // Allow both Ctrl and Cmd
+    if (modifier === "ctrl") return ["meta"]; // Allow Cmd
     if (modifier === "meta") return ["meta"]; // Keep meta as-is
   } else {
     // On Windows/Linux, Ctrl is used where Mac would use Cmd
@@ -362,7 +359,6 @@ function formatShortcut(
       [...sortedModifiers, config.key].join("+").toLowerCase()
     );
   });
-
   return allCombinations;
 }
 

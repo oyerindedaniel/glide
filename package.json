@@ -7,7 +7,7 @@
     "dev": "next dev",
     "start": "next start",
     "lint": "next lint",
-    "postinstall": "pnpm run copy-pdf-worker",
+    "postinstall": "",
     "build:worker": "esbuild pdf.worker.ts --bundle --outfile=public/pdfjs/pdf.worker.js --format=esm",
     "build": "next build && pnpm run copy-pdf-worker",
     "copy-pdf-worker": "cp node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs public/pdfjs/ || copy node_modules\\pdfjs-dist\\legacy\\build\\pdf.worker.mjs public\\pdfjs"
@@ -30,6 +30,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.475.0",
+    "mitt": "^3.0.1",
     "next": "15.1.7",
     "next-themes": "^0.4.4",
     "p-limit": "^6.2.0",
@@ -47,13 +48,19 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.51.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.2.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^9",
     "eslint-config-next": "15.1.7",
-    "typescript": "^5"
+    "jsdom": "^26.0.0",
+    "typescript": "^5",
+    "vitest": "^3.0.9"
   },
   "packageManager": "pnpm@9.13.2+sha512.88c9c3864450350e65a33587ab801acf946d7c814ed1134da4a924f6df5a2120fd36b46aab68f7cd1d413149112d53c7db3a4136624cfd00ff1846a0c6cef48a"
 }
